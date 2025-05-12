@@ -11,12 +11,66 @@
 
 // See maildir(5)
 
-use lettre::message::{Message, MultiPart, SinglePart, header};
+use lettre::address::AddressError;
+use lettre::message::{Mailbox, Message, MultiPart, SinglePart, header};
 use lettre::{SmtpTransport, Transport};
 use mime::IMAGE_SVG;
 use std::error::Error;
 
-fn main() -> Result<(), Box<dyn Error>> {
+struct MessageTemplate {
+    domain: String,
+    recipient: Mailbox,
+    sender: Mailbox,
+}
+
+impl MessageTemplate {
+    pub fn new(domain: String, recipient_username: String) -> Result<Self, AddressError> {
+        Ok(Self {
+            recipient: format!("{}@{}", recipient_username, &domain).parse()?,
+            sender: format!("spam-stats@{}", &domain).parse()?,
+            domain,
+        })
+    }
+
+    fn make_message(self, image: String) -> Result<Message, lettre::error::Error> {
+        let cid = "image1"; // Content-ID for embedding
+
+        let html_body = format!(
+            r#"
+        <html>
+        <body>
+            <p>Here are the spam statistics for {}.</p>
+            <img src="cid:{}" alt="SVG image" />
+        </body>
+        </html>
+        "#,
+            self.domain, cid
+        );
+
+        Message::builder()
+            .from(self.sender)
+            .to(self.recipient)
+            .subject("Spam Statistics")
+            .multipart(
+                MultiPart::related() // "multipart/related" to embed inline image
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(header::ContentType::TEXT_HTML)
+                            .body(html_body),
+                    )
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(header::ContentType::parse(&IMAGE_SVG.to_string()).unwrap())
+                            .header(header::ContentDisposition::inline())
+                            .header(header::ContentId::from(format!("<{}>", cid)))
+                            .body(image),
+                    ),
+            )
+    }
+}
+
+#[allow(dead_code)]
+fn spam_statistics() -> Result<(), Box<dyn Error>> {
     // Your SVG image as a string (inline image)
     let svg_image = r#"
     <svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
@@ -24,40 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     </svg>
     "#;
 
-    let cid = "image1"; // Content-ID for embedding
-
-    // HTML body that embeds the image
-    let html_body = format!(
-        r#"<html>
-        <body>
-            <h1>Hello!</h1>
-            <p>This is an email with an embedded SVG:</p>
-            <img src="cid:{}" alt="SVG image" />
-        </body>
-        </html>"#,
-        cid
-    );
-
-    // Construct the email
-    let email = Message::builder()
-        .from("root@ethantwardy.com".parse()?)
-        .to("et@ethantwardy.com".parse()?)
-        .subject("Embedded SVG Email")
-        .multipart(
-            MultiPart::related() // "multipart/related" to embed inline image
-                .singlepart(
-                    SinglePart::builder()
-                        .header(header::ContentType::TEXT_HTML)
-                        .body(html_body),
-                )
-                .singlepart(
-                    SinglePart::builder()
-                        .header(header::ContentType::parse(&IMAGE_SVG.to_string()).unwrap())
-                        .header(header::ContentDisposition::inline())
-                        .header(header::ContentId::from(format!("<{}>", cid)))
-                        .body(svg_image.to_string()),
-                ),
-        )?;
+    let template = MessageTemplate::new("ethantwardy.com".into(), "et".into())?;
+    let email = template.make_message(svg_image.into())?;
 
     // Create SMTP client for localhost:25
     let mailer = SmtpTransport::unencrypted_localhost();
@@ -68,5 +90,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Err(e) => eprintln!("Failed to send email: {e}"),
     }
 
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
