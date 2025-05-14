@@ -44,6 +44,35 @@ impl From<&SpamResults> for SpamResultsDistribution {
     }
 }
 
+fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occurrences)> {
+    let classified = value.into_iter().filter(|email| is_spam == email.is_spam);
+    let dates_received = classified.clone().map(|email| email.received);
+    let Some(earliest) = dates_received.clone().min() else {
+        return Vec::new();
+    };
+
+    // INVARIANT: There is definitely a max value here, because there was a min value.
+    let latest = dates_received.max().unwrap();
+
+    let delta = (latest - earliest).num_days();
+    let delta: usize = delta.try_into().expect(&format!(
+        "{} seems like the wrong number of emails for this inbox",
+        delta
+    ));
+
+    earliest
+        .iter_days()
+        .take(delta)
+        .map(|day| {
+            let occurrences = classified
+                .clone()
+                .filter(|email| email.received == day)
+                .count();
+            (day, occurrences)
+        })
+        .collect()
+}
+
 /// The distribution of spam received per day.
 pub struct SpamRateDistribution(Vec<(NaiveDate, Occurrences)>);
 
@@ -51,33 +80,7 @@ impl_into_iterator!(SpamRateDistribution, (NaiveDate, Occurrences), 0);
 
 impl From<&SpamResults> for SpamRateDistribution {
     fn from(value: &SpamResults) -> Self {
-        let classified_as_spam = value.into_iter().filter(|email| email.is_spam);
-        let dates_received = classified_as_spam.clone().map(|email| email.received);
-        let Some(earliest) = dates_received.clone().min() else {
-            return SpamRateDistribution(Vec::new());
-        };
-
-        // INVARIANT: There is definitely a max value here, because there was a min value.
-        let latest = dates_received.max().unwrap();
-
-        let delta = (latest - earliest).num_days();
-        let delta: usize = delta.try_into().expect(&format!(
-            "{} seems like the wrong number of emails for this inbox",
-            delta
-        ));
-        let distribution = earliest
-            .iter_days()
-            .take(delta)
-            .map(|day| {
-                let occurrences = classified_as_spam
-                    .clone()
-                    .filter(|email| email.received == day)
-                    .count();
-                (day, occurrences)
-            })
-            .collect();
-
-        SpamRateDistribution(distribution)
+        SpamRateDistribution(rate_distribution(true, value))
     }
 }
 
@@ -88,6 +91,6 @@ impl_into_iterator!(MissRateDistribution, (NaiveDate, Occurrences), 0);
 
 impl From<&SpamResults> for MissRateDistribution {
     fn from(value: &SpamResults) -> Self {
-        todo!()
+        MissRateDistribution(rate_distribution(false, value))
     }
 }
