@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.98"
+chrono = "0.4.41"
 lettre = "0.11.15"
 mime = "0.3.17"
+poloto = "19.1.2"
+tagu = "0.1.6"

@@ -6,80 +6,57 @@
 // 5. stat /var/spool/vmail/domain.com/user/.Spam/{cur,new}
 // 6. ls /var/spool/vmail/domain.com/user/.Spam/{cur,new}
 // 7. cat /var/spool/vmail/domain.com/user/.Spam/{cur,new}/*
-// 8. Format into SVG image
-// 9. Send email
+// 8. Send email
 
 // See maildir(5)
 
-use lettre::address::AddressError;
-use lettre::message::{Mailbox, Message, MultiPart, SinglePart, header};
+use core::error::Error;
+use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
-use mime::IMAGE_SVG;
-use std::error::Error;
+use plot::{Image, Quantity};
+use statistics::{
+    MissRateDistribution, SpamRateDistribution, SpamResults, SpamResultsDistribution,
+};
 
-struct MessageTemplate {
-    domain: String,
-    recipient: Mailbox,
-    sender: Mailbox,
-}
-
-impl MessageTemplate {
-    pub fn new(domain: String, recipient_username: String) -> Result<Self, AddressError> {
-        Ok(Self {
-            recipient: format!("{}@{}", recipient_username, &domain).parse()?,
-            sender: format!("spam-stats@{}", &domain).parse()?,
-            domain,
-        })
-    }
-
-    fn make_message(self, image: String) -> Result<Message, lettre::error::Error> {
-        let cid = "image1"; // Content-ID for embedding
-
-        let html_body = format!(
-            r#"
-        <html>
-        <body>
-            <p>Here are the spam statistics for {}.</p>
-            <img src="cid:{}" alt="SVG image" />
-        </body>
-        </html>
-        "#,
-            self.domain, cid
-        );
-
-        Message::builder()
-            .from(self.sender)
-            .to(self.recipient)
-            .subject("Spam Statistics")
-            .multipart(
-                MultiPart::related() // "multipart/related" to embed inline image
-                    .singlepart(
-                        SinglePart::builder()
-                            .header(header::ContentType::TEXT_HTML)
-                            .body(html_body),
-                    )
-                    .singlepart(
-                        SinglePart::builder()
-                            .header(header::ContentType::parse(&IMAGE_SVG.to_string()).unwrap())
-                            .header(header::ContentDisposition::inline())
-                            .header(header::ContentId::from(format!("<{}>", cid)))
-                            .body(image),
-                    ),
-            )
-    }
-}
+mod email;
+mod plot;
+mod statistics;
 
 #[allow(dead_code)]
 fn spam_statistics() -> Result<(), Box<dyn Error>> {
-    // Your SVG image as a string (inline image)
-    let svg_image = r#"
-    <svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
-        <circle cx="100" cy="100" r="80" stroke="green" stroke-width="4" fill="yellow" />
-    </svg>
-    "#;
+    let spam_results: SpamResults = Vec::new();
+    let domain = "ethantwardy.com";
+    let images = [
+        // 1. Histogram based on X-Spam-Result values
+        Quantity {
+            name: format!("X-Spam-Result Distribution for {}", domain),
+            domain: "Spam Result".into(),
+            range: "Occurrences".into(),
+            data: <SpamResultsDistribution as From<&SpamResults>>::from(&spam_results),
+        }
+        .make_histogram(),
+        // 2. Histogram of Spam received per day
+        Quantity {
+            name: format!("Daily Received Spam for {}", domain),
+            domain: "Date".into(),
+            range: "Occurrences".into(),
+            data: <SpamRateDistribution as From<&SpamResults>>::from(&spam_results),
+        }
+        .make_histogram(),
+        // 3. Histogram of Spam received not marked "X-Spam":"Yes" per day
+        Quantity {
+            name: format!("Daily Misclassified Spam for {}", domain),
+            domain: "Date".into(),
+            range: "Occurrences".into(),
+            data: <MissRateDistribution as From<&SpamResults>>::from(&spam_results),
+        }
+        .make_histogram(),
+    ]
+    .into_iter()
+    .collect::<Result<Vec<Image>, _>>()?;
 
-    let template = MessageTemplate::new("ethantwardy.com".into(), "et".into())?;
-    let email = template.make_message(svg_image.into())?;
+    let template = MessageTemplate::new(domain.into(), "et".into())?;
+    let email = template.make_message(images.into_iter())?;
 
     // Create SMTP client for localhost:25
     let mailer = SmtpTransport::unencrypted_localhost();
