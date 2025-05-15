@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 
 macro_rules! impl_into_iterator {
@@ -40,7 +42,24 @@ impl_into_iterator!(SpamResultsDistribution, (SpamResultBin, Occurrences), 0);
 
 impl From<&SpamResults> for SpamResultsDistribution {
     fn from(value: &SpamResults) -> Self {
-        todo!()
+        let mut bins: HashMap<SpamResultBin, Occurrences> = HashMap::new();
+        for email in value.into_iter() {
+            let bin = email.spam_result as SpamResultBin;
+            *bins.entry(bin).or_insert(0) += 1;
+        }
+
+        let keys = bins.keys();
+        let Some(min) = keys.clone().min() else {
+            return SpamResultsDistribution(Vec::new());
+        };
+        // INVARIANT: If there is a min, there is definitely a max.
+        let max = keys.max().unwrap();
+
+        let bins = (*min..*max)
+            .into_iter()
+            .map(|bin| (bin, *bins.get(&bin).unwrap_or(&0)))
+            .collect();
+        SpamResultsDistribution(bins)
     }
 }
 
