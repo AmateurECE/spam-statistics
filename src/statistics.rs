@@ -22,10 +22,11 @@ pub type SpamResult = f64;
 /// The number of occurrences of an event.
 pub type Occurrences = usize;
 
+#[derive(Debug)]
 pub struct SpamEmail {
-    received: NaiveDate,
-    spam_result: SpamResult,
-    is_spam: bool,
+    pub date_received: NaiveDate,
+    pub spam_result: SpamResult,
+    pub is_spam: bool,
 }
 
 /// A series of data points that correlate a [SpamResult] assigned to an email with the date that
@@ -43,7 +44,7 @@ impl_into_iterator!(SpamResultsDistribution, (SpamResultBin, Occurrences), 0);
 impl From<&SpamResults> for SpamResultsDistribution {
     fn from(value: &SpamResults) -> Self {
         let mut bins: HashMap<SpamResultBin, Occurrences> = HashMap::new();
-        for email in value.into_iter() {
+        for email in value {
             let bin = email.spam_result as SpamResultBin;
             *bins.entry(bin).or_insert(0) += 1;
         }
@@ -56,7 +57,6 @@ impl From<&SpamResults> for SpamResultsDistribution {
         let max = keys.max().unwrap();
 
         let bins = (*min..*max)
-            .into_iter()
             .map(|bin| (bin, *bins.get(&bin).unwrap_or(&0)))
             .collect();
         SpamResultsDistribution(bins)
@@ -64,8 +64,8 @@ impl From<&SpamResults> for SpamResultsDistribution {
 }
 
 fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occurrences)> {
-    let classified = value.into_iter().filter(|email| is_spam == email.is_spam);
-    let dates_received = classified.clone().map(|email| email.received);
+    let classified = value.iter().filter(|email| is_spam == email.is_spam);
+    let dates_received = classified.clone().map(|email| email.date_received);
     let Some(earliest) = dates_received.clone().min() else {
         return Vec::new();
     };
@@ -74,10 +74,12 @@ fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occu
     let latest = dates_received.max().unwrap();
 
     let delta = (latest - earliest).num_days();
-    let delta: usize = delta.try_into().expect(&format!(
-        "{} seems like the wrong number of emails for this inbox",
-        delta
-    ));
+    let delta: usize = delta.try_into().unwrap_or_else(|_| {
+        panic!(
+            "{} seems like the wrong number of emails for this inbox",
+            delta
+        )
+    });
 
     earliest
         .iter_days()
@@ -85,7 +87,7 @@ fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occu
         .map(|day| {
             let occurrences = classified
                 .clone()
-                .filter(|email| email.received == day)
+                .filter(|email| email.date_received == day)
                 .count();
             (day, occurrences)
         })

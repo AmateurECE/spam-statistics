@@ -1,31 +1,30 @@
-// Actions to determine spam statistics for a single user, user@domain.com:
-// 1. Read config file
-// 2. ls /var/spool/vmail/
-// 3. ls /var/spool/vmail/domain.com
-// 4. stat /var/spool/vmail/domain.com/user/.Spam
-// 5. stat /var/spool/vmail/domain.com/user/.Spam/{cur,new}
-// 6. ls /var/spool/vmail/domain.com/user/.Spam/{cur,new}
-// 7. cat /var/spool/vmail/domain.com/user/.Spam/{cur,new}/*
-// 8. Send email
-
-// See maildir(5)
-
+use clap::Parser;
 use core::error::Error;
 use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
 use plot::{Image, Quantity};
+use spam::load_spam_results;
 use statistics::{
     MissRateDistribution, SpamRateDistribution, SpamResults, SpamResultsDistribution,
 };
+use std::path::Path;
 
 mod email;
 mod plot;
+mod spam;
 mod statistics;
 
 #[allow(dead_code)]
-fn spam_statistics() -> Result<(), Box<dyn Error>> {
-    let spam_results: SpamResults = Vec::new();
-    let domain = "ethantwardy.com";
+fn spam_statistics<P>(domain: &str, virtual_mailbox_base: P) -> Result<(), Box<dyn Error>>
+where
+    P: AsRef<Path>,
+{
+    let spam_results = load_spam_results(virtual_mailbox_base)?;
+    if spam_results.is_empty() {
+        println!("No spam.");
+        return Ok(());
+    }
+
     let images = [
         // 1. Histogram based on X-Spam-Result values
         Quantity {
@@ -55,7 +54,7 @@ fn spam_statistics() -> Result<(), Box<dyn Error>> {
     .into_iter()
     .collect::<Result<Vec<Image>, _>>()?;
 
-    let template = MessageTemplate::new(domain.into(), "et".into())?;
+    let template = MessageTemplate::new(domain.into(), "postmaster".into())?;
     let email = template.make_message(images.into_iter())?;
 
     // Create SMTP client for localhost:25
@@ -70,6 +69,18 @@ fn spam_statistics() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[derive(clap::Parser)]
+struct Args {
+    /// The receiving mail domain. Emails will be sent to postmaster.
+    #[clap(value_parser, short, long)]
+    domain: String,
+
+    /// The virtual mailbox base path
+    #[clap(value_parser, short, long)]
+    path: String,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    Ok(())
+    let args = Args::parse();
+    spam_statistics(&args.domain, args.path)
 }

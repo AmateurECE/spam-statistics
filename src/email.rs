@@ -31,7 +31,7 @@ impl MessageTemplate {
             let cid = format!("image{}", i);
             html_image_content += &format!(r#"<img src="cid:{}" alt="{}" />"#, cid, image.alt);
             let singlepart = SinglePart::builder()
-                .header(header::ContentType::parse(&mime::IMAGE_SVG.to_string()).unwrap())
+                .header(header::ContentType::parse(mime::IMAGE_SVG.as_ref()).unwrap())
                 .header(header::ContentDisposition::inline())
                 .header(header::ContentId::from(format!("<{}>", cid)))
                 .body(image.svg);

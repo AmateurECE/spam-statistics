@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 chrono = "0.4.41"
+clap = { version = "4.5.38", features = ["derive"] }
+email = "0.0.21"
 lettre = "0.11.15"
 mime = "0.3.17"
-poloto = "19.1.2"
-tagu = "0.1.6"
+regex = "1.11.1"
+thiserror = "2.0.12"

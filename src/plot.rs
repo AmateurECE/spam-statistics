@@ -19,13 +19,14 @@ pub struct Image {
     pub alt: String,
 }
 
-#[derive(Clone, Debug)]
-struct ImageError(String);
-impl std::error::Error for ImageError {}
-impl fmt::Display for ImageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+#[derive(Clone, Debug, thiserror::Error)]
+enum ImageError {
+    #[error("dataset is empty")]
+    NoData,
+    #[error("failed to communicate with gnuplot")]
+    Pipe,
+    #[error("gnuplot")]
+    Gnuplot(String),
 }
 
 pub struct Quantity<D> {
@@ -43,9 +44,8 @@ impl<D> Quantity<D> {
     {
         let data = self.data.into_iter();
         let domain = data.clone().map(|(x, _)| x);
-        let no_data = ImageError("No data!".into());
-        let min = domain.clone().min().ok_or_else(|| no_data.clone())?;
-        let max = domain.max().ok_or_else(|| no_data)?;
+        let min = domain.clone().min().ok_or(ImageError::NoData)?;
+        let max = domain.max().ok_or(ImageError::NoData)?;
 
         let mut script = GNUPLOT_SCRIPT.to_string();
         script += &format!("set yrange [ {} : {} ]\n", min, max);
@@ -60,15 +60,12 @@ impl<D> Quantity<D> {
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let mut stdin = gnuplot
-            .stdin
-            .take()
-            .ok_or(ImageError("Failed to open gnuplot stdin".into()))?;
+        let mut stdin = gnuplot.stdin.take().ok_or(ImageError::Pipe)?;
 
         stdin.write_all(script.as_bytes())?;
         let output = gnuplot.wait_with_output()?;
         if !output.status.success() {
-            return Err(ImageError(String::from_utf8(output.stderr)?).into());
+            return Err(ImageError::Gnuplot(String::from_utf8(output.stderr)?).into());
         }
 
         Ok(Image {
