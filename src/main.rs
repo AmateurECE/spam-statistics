@@ -7,12 +7,21 @@ use spam::load_spam_results;
 use statistics::{
     MissRateDistribution, SpamRateDistribution, SpamResults, SpamResultsDistribution,
 };
-use std::path::Path;
+use std::{io, path::Path};
 
 mod email;
 mod plot;
 mod spam;
 mod statistics;
+
+fn get_hostname() -> Result<String, anyhow::Error> {
+    let mut hostname: [u8; 64] = [0; 64];
+    let result = unsafe { libc::gethostname(&mut hostname as *mut u8 as *mut i8, hostname.len()) };
+    if 0 != result {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(String::from_utf8(Vec::from(hostname))?)
+}
 
 #[allow(dead_code)]
 fn spam_statistics<P>(domain: &str, virtual_mailbox_base: P) -> Result<(), Box<dyn Error>>
@@ -71,10 +80,6 @@ where
 
 #[derive(clap::Parser)]
 struct Args {
-    /// The receiving mail domain. Emails will be sent to postmaster.
-    #[clap(value_parser, short, long)]
-    domain: String,
-
     /// The virtual mailbox base path
     #[clap(value_parser, short, long)]
     path: String,
@@ -82,5 +87,6 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    spam_statistics(&args.domain, args.path)
+    let domain = get_hostname()?;
+    spam_statistics(&domain, args.path)
 }

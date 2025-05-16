@@ -787,6 +787,7 @@ dependencies = [
  "clap",
  "email",
  "lettre",
+ "libc",
  "mime",
  "regex",
  "thiserror",
