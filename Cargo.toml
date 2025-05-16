@@ -2,13 +2,15 @@
 name = "spam-statistics"
 version = "0.1.0"
 edition = "2021"
+description = "Gather statistics about spam on systems that use Rspamd"
+homepage = "https://github.com/AmateurECE/spam-statistics"
 
 [dependencies]
-anyhow = "1.0.98"
-chrono = "0.4.41"
-clap = { version = "4.5.38", features = ["derive"] }
-email = "0.0.21"
-lettre = "0.11.15"
-mime = "0.3.17"
-regex = "1.11.1"
-thiserror = "2.0.12"
+anyhow = { version = "1.0.98", default-features = false }
+chrono = { version = "0.4.41", default-features = false }
+clap = { version = "4.5.38", features = ["std", "derive"], default-features = false }
+email = { version = "0.0.21", default-features = false }
+lettre = { version = "0.11.16", features = [ "builder", "smtp-transport" ], default-features = false }
+mime = { version = "0.3.17", default-features = false }
+regex = { version = "1.11.1", default-features = false }
+thiserror = { version = "2.0.12", default-features = false }
