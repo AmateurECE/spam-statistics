@@ -7,7 +7,11 @@ use spam::load_spam_results;
 use statistics::{
     MissRateDistribution, SpamRateDistribution, SpamResults, SpamResultsDistribution,
 };
-use std::{ffi::c_char, io, path::Path};
+use std::{
+    ffi::{c_char, CStr},
+    io,
+    path::Path,
+};
 
 mod email;
 mod plot;
@@ -15,13 +19,13 @@ mod spam;
 mod statistics;
 
 fn get_hostname() -> Result<String, anyhow::Error> {
-    let mut hostname: [u8; 64] = [0; 64];
-    let result =
-        unsafe { libc::gethostname(&mut hostname as *mut u8 as *mut c_char, hostname.len()) };
+    let mut buffer: [u8; 64] = [0; 64];
+    let result = unsafe { libc::gethostname(buffer.as_mut_ptr() as *mut c_char, buffer.len()) };
     if 0 != result {
         return Err(io::Error::last_os_error().into());
     }
-    Ok(String::from_utf8(Vec::from(hostname))?)
+    let hostname = unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) };
+    Ok(hostname.to_str()?.to_owned())
 }
 
 #[allow(dead_code)]

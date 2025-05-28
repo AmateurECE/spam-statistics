@@ -12,6 +12,7 @@ set style data histogram
 set style fill solid border -1
 set boxwidth 0.5
 set xtics rotate by -45
+unset key
 "#;
 
 pub struct Image {
@@ -40,19 +41,27 @@ impl<D> Quantity<D> {
     pub fn make_histogram<X, Y>(self) -> Result<Image, anyhow::Error>
     where
         for<'a> &'a D: IntoIterator<IntoIter = slice::Iter<'a, (X, Y)>>,
-        X: Ord + fmt::Display,
+        X: fmt::Display,
+        Y: Ord + fmt::Display,
     {
         let data = self.data.into_iter();
-        let domain = data.clone().map(|(x, _)| x);
-        let min = domain.clone().min().ok_or(ImageError::NoData)?;
-        let max = domain.max().ok_or(ImageError::NoData)?;
+        let range = data.clone().map(|(_, y)| y);
+        let min = range.clone().min().ok_or(ImageError::NoData)?;
+        let max = range.max().ok_or(ImageError::NoData)?;
 
         let mut script = GNUPLOT_SCRIPT.to_string();
         script += &format!("set yrange [ {} : {} ]\n", min, max);
-        script += &format!("set ylabel \"{}\"", self.range);
-        script += &format!("set xlabel \"{}\"", self.domain);
+        script += &format!("set ylabel \"{}\"\n", self.range);
+        script += &format!("set xlabel \"{}\"\n", self.domain);
         script += &format!("set title \"{}\"\n", self.name);
         script += &format!("plot '-' using 2:xtic(1) title '{}'\n", self.name);
+        script += &data
+            // TODO: Kind of a hack to wrap the x value in double quotes. Can we pull this out into
+            // a trait instead?
+            .map(|(x, y)| format!("\"{}\" {}", x, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        script += "e\n";
 
         let mut gnuplot = Command::new("gnuplot")
             .arg("-")
@@ -60,9 +69,11 @@ impl<D> Quantity<D> {
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let mut stdin = gnuplot.stdin.take().ok_or(ImageError::Pipe)?;
+        {
+            let mut stdin = gnuplot.stdin.take().ok_or(ImageError::Pipe)?;
+            stdin.write_all(script.as_bytes())?;
+        }
 
-        stdin.write_all(script.as_bytes())?;
         let output = gnuplot.wait_with_output()?;
         if !output.status.success() {
             return Err(ImageError::Gnuplot(String::from_utf8(output.stderr)?).into());

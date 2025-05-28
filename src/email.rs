@@ -1,7 +1,7 @@
 use lettre::{
-    Message,
     address::AddressError,
-    message::{Mailbox, MultiPart, SinglePart, header},
+    message::{header, Mailbox, MultiPart, SinglePart},
+    Message,
 };
 
 use crate::plot::Image;
@@ -25,8 +25,8 @@ impl MessageTemplate {
     where
         I: Iterator<Item = Image>,
     {
-        let mut multipart: Option<MultiPart> = None;
         let mut html_image_content = String::new();
+        let mut parts = Vec::<SinglePart>::new();
         for (i, image) in images.enumerate() {
             let cid = format!("image{}", i);
             html_image_content += &format!(r#"<img src="cid:{}" alt="{}" />"#, cid, image.alt);
@@ -35,10 +35,7 @@ impl MessageTemplate {
                 .header(header::ContentDisposition::inline())
                 .header(header::ContentId::from(format!("<{}>", cid)))
                 .body(image.svg);
-            multipart = match multipart {
-                Some(m) => Some(m.singlepart(singlepart)),
-                None => Some(MultiPart::related().singlepart(singlepart)),
-            };
+            parts.push(singlepart);
         }
 
         let html_body = format!(
@@ -56,10 +53,10 @@ impl MessageTemplate {
         let message = SinglePart::builder()
             .header(header::ContentType::TEXT_HTML)
             .body(html_body);
-        let multipart = match multipart {
-            Some(m) => m.singlepart(message),
-            None => MultiPart::related().singlepart(message),
-        };
+        let mut multipart = MultiPart::related().singlepart(message);
+        for part in parts {
+            multipart = multipart.singlepart(part);
+        }
 
         Message::builder()
             .from(self.sender)
