@@ -3,6 +3,7 @@ use core::error::Error;
 use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
 use plot::{Image, Quantity};
+use rspamd::load_rspamd_statistics;
 use spam::load_spam_results;
 use statistics::{
     SpamRateDistribution, SpamResults, SpamResultsDistribution, TotalSpamDistribution,
@@ -15,6 +16,7 @@ use std::{
 
 mod email;
 mod plot;
+mod rspamd;
 mod spam;
 mod statistics;
 
@@ -68,8 +70,10 @@ where
     .into_iter()
     .collect::<Result<Vec<Image>, _>>()?;
 
+    let rspamd_statistics = load_rspamd_statistics()?;
+
     let template = MessageTemplate::new(domain.into(), "postmaster".into())?;
-    let email = template.make_message(images.into_iter())?;
+    let email = template.make_message(images.into_iter(), rspamd_statistics.into_iter())?;
 
     // Create SMTP client for localhost:25
     let mailer = SmtpTransport::unencrypted_localhost();

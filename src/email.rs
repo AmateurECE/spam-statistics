@@ -21,9 +21,10 @@ impl MessageTemplate {
         })
     }
 
-    pub fn make_message<I>(self, images: I) -> Result<Message, lettre::error::Error>
+    pub fn make_message<I, T>(self, images: I, text: T) -> Result<Message, lettre::error::Error>
     where
         I: Iterator<Item = Image>,
+        T: Iterator<Item = String>,
     {
         let mut html_image_content = String::new();
         let mut parts = Vec::<SinglePart>::new();
@@ -38,16 +39,22 @@ impl MessageTemplate {
             parts.push(singlepart);
         }
 
+        let text_content = text
+            .map(|line| format!("<p>{}</p>", &line))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let html_body = format!(
             r#"
         <html>
         <body>
             <p>Here are the spam statistics for {}.</p>
             {}
+            {}
         </body>
         </html>
         "#,
-            self.domain, html_image_content
+            self.domain, text_content, html_image_content
         );
 
         let message = SinglePart::builder()
