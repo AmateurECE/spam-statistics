@@ -5,7 +5,7 @@ use lettre::{SmtpTransport, Transport};
 use plot::{Image, Quantity};
 use spam::load_spam_results;
 use statistics::{
-    MissRateDistribution, SpamRateDistribution, SpamResults, SpamResultsDistribution,
+    SpamRateDistribution, SpamResults, SpamResultsDistribution, TotalSpamDistribution,
 };
 use std::{
     ffi::{c_char, CStr},
@@ -48,20 +48,20 @@ where
             data: <SpamResultsDistribution as From<&SpamResults>>::from(&spam_results),
         }
         .make_histogram(),
-        // 2. Histogram of Spam received per day
+        // 2. Histogram of spam classification performance
+        Quantity {
+            name: format!("Spam Misclassification Rate for {}", domain),
+            domain: "Date".into(),
+            range: "Percent".into(),
+            data: <SpamRateDistribution as From<&SpamResults>>::from(&spam_results),
+        }
+        .make_histogram(),
+        // 3. Histogram of spam received per day
         Quantity {
             name: format!("Daily Received Spam for {}", domain),
             domain: "Date".into(),
             range: "Occurrences".into(),
-            data: <SpamRateDistribution as From<&SpamResults>>::from(&spam_results),
-        }
-        .make_histogram(),
-        // 3. Histogram of Spam received not marked "X-Spam":"Yes" per day
-        Quantity {
-            name: format!("Daily Misclassified Spam for {}", domain),
-            domain: "Date".into(),
-            range: "Occurrences".into(),
-            data: <MissRateDistribution as From<&SpamResults>>::from(&spam_results),
+            data: <TotalSpamDistribution as From<&SpamResults>>::from(&spam_results),
         }
         .make_histogram(),
     ]

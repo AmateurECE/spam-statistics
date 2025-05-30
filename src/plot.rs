@@ -22,8 +22,6 @@ pub struct Image {
 
 #[derive(Clone, Debug, thiserror::Error)]
 enum ImageError {
-    #[error("dataset is empty")]
-    NoData,
     #[error("failed to communicate with gnuplot")]
     Pipe,
     #[error("gnuplot")]
@@ -42,15 +40,11 @@ impl<D> Quantity<D> {
     where
         for<'a> &'a D: IntoIterator<IntoIter = slice::Iter<'a, (X, Y)>>,
         X: fmt::Display,
-        Y: Ord + fmt::Display,
+        Y: fmt::Display,
     {
         let data = self.data.into_iter();
-        let range = data.clone().map(|(_, y)| y);
-        let min = range.clone().min().ok_or(ImageError::NoData)?;
-        let max = range.max().ok_or(ImageError::NoData)?;
 
         let mut script = GNUPLOT_SCRIPT.to_string();
-        script += &format!("set yrange [ {} : {} ]\n", min, max);
         script += &format!("set ylabel \"{}\"\n", self.range);
         script += &format!("set xlabel \"{}\"\n", self.domain);
         script += &format!("set title \"{}\"\n", self.name);

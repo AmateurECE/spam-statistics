@@ -63,9 +63,24 @@ impl From<&SpamResults> for SpamResultsDistribution {
     }
 }
 
-fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occurrences)> {
-    let classified = value.iter().filter(|email| is_spam == email.is_spam);
-    let dates_received = classified.clone().map(|email| email.date_received);
+#[derive(Default)]
+struct SpamCount {
+    spam: Occurrences,
+    ham: Occurrences,
+}
+
+fn spam_counts(emails: &SpamResults) -> Vec<(NaiveDate, SpamCount)> {
+    let mut counts = HashMap::new();
+    for email in emails {
+        let count: &mut SpamCount = counts.entry(email.date_received).or_default();
+        if email.is_spam {
+            count.spam += 1;
+        } else {
+            count.ham += 1;
+        }
+    }
+
+    let dates_received = counts.keys();
     let Some(earliest) = dates_received.clone().min() else {
         return Vec::new();
     };
@@ -73,7 +88,7 @@ fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occu
     // INVARIANT: There is definitely a max value here, because there was a min value.
     let latest = dates_received.max().unwrap();
 
-    let delta = (latest - earliest).num_days();
+    let delta = (*latest - *earliest).num_days();
     let delta: usize = delta.try_into().unwrap_or_else(|_| {
         panic!(
             "{} seems like the wrong number of emails for this inbox",
@@ -85,33 +100,44 @@ fn rate_distribution(is_spam: bool, value: &SpamResults) -> Vec<(NaiveDate, Occu
         .iter_days()
         .take(delta)
         .map(|day| {
-            let occurrences = classified
-                .clone()
-                .filter(|email| email.date_received == day)
-                .count();
-            (day, occurrences)
+            let count = counts.remove(&day).unwrap_or(SpamCount::default());
+            (day, count)
         })
         .collect()
 }
 
-/// The distribution of spam received per day.
-pub struct SpamRateDistribution(Vec<(NaiveDate, Occurrences)>);
+/// The percentage of correctly classified spam received on each day.
+pub struct SpamRateDistribution(Vec<(NaiveDate, f64)>);
 
-impl_into_iterator!(SpamRateDistribution, (NaiveDate, Occurrences), 0);
+impl_into_iterator!(SpamRateDistribution, (NaiveDate, f64), 0);
 
 impl From<&SpamResults> for SpamRateDistribution {
     fn from(value: &SpamResults) -> Self {
-        SpamRateDistribution(rate_distribution(true, value))
+        SpamRateDistribution(
+            spam_counts(value)
+                .into_iter()
+                .map(|(date, count)| {
+                    let spam = count.spam as f64;
+                    let ham = count.ham as f64;
+                    (date, ham / (spam + ham))
+                })
+                .collect(),
+        )
     }
 }
 
-/// The distribution of email erroneously classified as ham received per day.
-pub struct MissRateDistribution(Vec<(NaiveDate, Occurrences)>);
+/// The distribution total spam received per day.
+pub struct TotalSpamDistribution(Vec<(NaiveDate, Occurrences)>);
 
-impl_into_iterator!(MissRateDistribution, (NaiveDate, Occurrences), 0);
+impl_into_iterator!(TotalSpamDistribution, (NaiveDate, Occurrences), 0);
 
-impl From<&SpamResults> for MissRateDistribution {
+impl From<&SpamResults> for TotalSpamDistribution {
     fn from(value: &SpamResults) -> Self {
-        MissRateDistribution(rate_distribution(false, value))
+        TotalSpamDistribution(
+            spam_counts(value)
+                .into_iter()
+                .map(|(date, count)| (date, (count.spam + count.ham)))
+                .collect(),
+        )
     }
 }
