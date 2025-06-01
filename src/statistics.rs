@@ -88,7 +88,7 @@ fn spam_counts(emails: &SpamResults) -> Vec<(NaiveDate, SpamCount)> {
     // INVARIANT: There is definitely a max value here, because there was a min value.
     let latest = dates_received.max().unwrap();
 
-    let delta = (*latest - *earliest).num_days();
+    let delta = (*latest - *earliest).num_days() + 1;
     let delta: usize = delta.try_into().unwrap_or_else(|_| {
         panic!(
             "{} seems like the wrong number of emails for this inbox",
