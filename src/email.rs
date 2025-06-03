@@ -54,7 +54,7 @@ impl MessageTemplate {
         </body>
         </html>
         "#,
-            self.domain, text_content, html_image_content
+            self.domain, html_image_content, text_content
         );
 
         let message = SinglePart::builder()
