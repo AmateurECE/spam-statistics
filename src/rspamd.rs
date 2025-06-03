@@ -1,11 +1,14 @@
 use std::{
-    cell::LazyCell,
     process::{Command, Stdio},
+    sync::LazyLock,
 };
 
 use regex::Regex;
 
 use crate::statistics::Occurrences;
+
+static ACTION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^Messages with action ([^:]*): ([0-9]*),").unwrap());
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum RspamdError {
@@ -63,8 +66,7 @@ pub fn load_rspamd_statistics() -> Result<RspamdStatistics, RspamdError> {
     if !output.status.success() {
         return Err(RspamdError::Subprocess(
             String::from_utf8(output.stderr).map_err(rspamd_error)?,
-        )
-        .into());
+        ));
     }
 
     let output = String::from_utf8_lossy(&output.stdout);
@@ -73,8 +75,6 @@ pub fn load_rspamd_statistics() -> Result<RspamdStatistics, RspamdError> {
         .map(ToString::to_string)
         .collect::<Vec<String>>();
 
-    const ACTION_REGEX: LazyCell<Regex> =
-        LazyCell::new(|| Regex::new(r"^Messages with action ([^:]*): ([0-9]*),").unwrap());
     let mut message_actions = MessageActions::default();
     for line in statistics.as_slice() {
         let captures = ACTION_REGEX.captures(line);
