@@ -21,18 +21,30 @@ pub enum Color {
     Violet,
 }
 
-impl From<Color> for RGBColor {
-    fn from(value: Color) -> RGBColor {
-        match value {
-            Color::Red => RED,
-            Color::Orange => ORANGE,
-            Color::Yellow => YELLOW,
-            Color::Green => GREEN,
-            Color::Blue => BLUE,
-            Color::Indigo => INDIGO,
-            Color::Violet => PURPLE,
-        }
-    }
+pub struct Image {
+    pub svg: String,
+    pub alt: String,
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ImageError {
+    #[error("failed to communicate with gnuplot")]
+    Pipe,
+    #[error("gnuplot")]
+    Gnuplot(String),
+}
+
+pub struct PieSlice {
+    pub label: String,
+    pub color: Color,
+    pub ratio: f64,
+}
+
+pub struct Quantity<D> {
+    pub name: String,
+    pub domain: String,
+    pub range: String,
+    pub data: D,
 }
 
 const FONT_SIZE: i32 = 16;
@@ -48,24 +60,18 @@ set xtics rotate by -45
 unset key
 "#;
 
-pub struct Image {
-    pub svg: String,
-    pub alt: String,
-}
-
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum ImageError {
-    #[error("failed to communicate with gnuplot")]
-    Pipe,
-    #[error("gnuplot")]
-    Gnuplot(String),
-}
-
-pub struct Quantity<D> {
-    pub name: String,
-    pub domain: String,
-    pub range: String,
-    pub data: D,
+impl From<Color> for RGBColor {
+    fn from(value: Color) -> RGBColor {
+        match value {
+            Color::Red => RED,
+            Color::Orange => ORANGE,
+            Color::Yellow => YELLOW,
+            Color::Green => GREEN,
+            Color::Blue => BLUE,
+            Color::Indigo => INDIGO,
+            Color::Violet => PURPLE,
+        }
+    }
 }
 
 impl<D> Quantity<D> {
@@ -173,7 +179,7 @@ fn remove_width_height(svg_input: String) -> String {
     writer.end_document()
 }
 
-impl Quantity<&[(&str, Color, f64)]> {
+impl Quantity<&[PieSlice]> {
     pub fn make_pie(self) -> Result<Image, ImageError> {
         let mut svg = String::new();
         {
@@ -181,16 +187,16 @@ impl Quantity<&[(&str, Color, f64)]> {
             drawing_area.fill(&WHITE).expect("Couldn't fill background");
 
             let center = (300, 200);
-            let radius = 175.0;
+            let radius = 100.0;
 
-            let data = self.data.iter().filter(|(_, _, amount)| *amount != 0.0);
+            let data = self.data.iter().filter(|slice| slice.ratio != 0.0);
 
-            let sizes = data.clone().map(|(_, _, size)| *size).collect::<Vec<_>>();
+            let sizes = data.clone().map(|slice| slice.ratio).collect::<Vec<_>>();
             let colors = data
                 .clone()
-                .map(|(_, color, _)| (*color).into())
+                .map(|slice| slice.color.into())
                 .collect::<Vec<_>>();
-            let labels = data.clone().map(|(label, _, _)| label).collect::<Vec<_>>();
+            let labels = data.clone().map(|slice| &slice.label).collect::<Vec<_>>();
 
             let mut pie = Pie::new(&center, &radius, &sizes, &colors, &labels);
             pie.label_style(("Roboto", FONT_SIZE).into_font());

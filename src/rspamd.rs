@@ -18,28 +18,10 @@ pub enum RspamdError {
 
 #[derive(Default)]
 pub struct MessageActions {
-    reject: Occurrences,
-    greylist: Occurrences,
-    add_header: Occurrences,
-    no_action: Occurrences,
-}
-
-impl MessageActions {
-    pub fn actions(&self) -> Vec<(String, f64)> {
-        let Self {
-            reject,
-            greylist,
-            add_header,
-            no_action,
-        } = self;
-        let total = (reject + greylist + add_header + no_action) as f64;
-        vec![
-            ("Reject".to_string(), (*reject as f64) / total),
-            ("Greylist".to_string(), (*greylist as f64) / total),
-            ("Add Header".to_string(), (*add_header as f64) / total),
-            ("No Action".to_string(), (*no_action as f64) / total),
-        ]
-    }
+    pub reject: Occurrences,
+    pub greylist: Occurrences,
+    pub add_header: Occurrences,
+    pub no_action: Occurrences,
 }
 
 pub struct RspamdStatistics {
