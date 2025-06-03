@@ -35,6 +35,8 @@ impl From<Color> for RGBColor {
     }
 }
 
+const FONT_SIZE: i32 = 16;
+
 static GNUPLOT_SCRIPT: &str = r#"
 set terminal svg size 600,400 dynamic enhanced fname 'Arial'
 set output
@@ -123,9 +125,10 @@ fn remove_width_height(svg_input: String) -> String {
     let doc = Document::parse(&svg_input).expect("Failed to parse SVG");
     let root = doc.root_element();
 
-    let mut options = Options::default();
-    options.indent = Indent::None;
-    let mut writer = XmlWriter::new(options);
+    let mut writer = XmlWriter::new(Options {
+        indent: Indent::None,
+        ..Default::default()
+    });
 
     fn write_node(node: roxmltree::Node, writer: &mut XmlWriter) {
         match node.node_type() {
@@ -190,8 +193,12 @@ impl Quantity<&[(&str, Color, f64)]> {
             let labels = data.clone().map(|(label, _, _)| label).collect::<Vec<_>>();
 
             let mut pie = Pie::new(&center, &radius, &sizes, &colors, &labels);
-            pie.label_style(("Roboto", 16).into_font());
-            drawing_area.draw(&pie).expect("Couldn't draw pie chart");
+            pie.label_style(("Roboto", FONT_SIZE).into_font());
+            drawing_area
+                .titled(&self.name, ("Roboto", FONT_SIZE).into_font())
+                .expect("Couldn't apply title to chart")
+                .draw(&pie)
+                .expect("Couldn't draw pie chart");
 
             drawing_area
                 .present()
