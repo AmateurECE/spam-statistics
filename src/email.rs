@@ -39,10 +39,12 @@ impl MessageTemplate {
             parts.push(singlepart);
         }
 
-        let text_content = text
-            .map(|line| format!("<p>{}</p>", &line))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text_content = r#"<ul style="list-style-type:none;">"#.to_string()
+            + &text
+                .map(|line| format!("<li>{}</li>", &line))
+                .collect::<Vec<_>>()
+                .join("\n")
+            + "</ul>";
 
         let html_body = format!(
             r#"
