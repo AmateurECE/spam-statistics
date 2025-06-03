@@ -2,10 +2,12 @@ use core::{fmt, slice};
 use full_palette::{ORANGE, PURPLE};
 use plotters::{prelude::*, style::full_palette::INDIGO};
 use plotters_svg::SVGBackend;
+use roxmltree::Document;
 use std::{
     io::Write,
     process::{Command, Stdio},
 };
+use xmlwriter::{Indent, Options, XmlWriter};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[allow(dead_code)]
@@ -117,6 +119,57 @@ impl<D> Quantity<D> {
     }
 }
 
+fn remove_width_height(svg_input: String) -> String {
+    let doc = Document::parse(&svg_input).expect("Failed to parse SVG");
+    let root = doc.root_element();
+
+    let mut options = Options::default();
+    options.indent = Indent::None;
+    let mut writer = XmlWriter::new(options);
+
+    fn write_node(node: roxmltree::Node, writer: &mut XmlWriter) {
+        match node.node_type() {
+            roxmltree::NodeType::Element => {
+                writer.start_element(node.tag_name().name());
+
+                // Copy attributes, excluding width and height for the <svg> element
+                for attr in node.attributes() {
+                    if node.tag_name().name() == "svg"
+                        && (attr.name() == "width" || attr.name() == "height")
+                    {
+                        continue;
+                    }
+                    writer.write_attribute(attr.name(), attr.value());
+                }
+
+                // Have to render XML namespaces into the output, or else some mail clients
+                // (Thunderbird) don't want to render it.
+                for attr in node.namespaces() {
+                    if let Some(name) = attr.name() {
+                        let name = "xmlns:".to_string() + name;
+                        writer.write_attribute(&name, attr.uri());
+                    } else {
+                        writer.write_attribute("xmlns", attr.uri());
+                    }
+                }
+
+                for child in node.children() {
+                    write_node(child, writer);
+                }
+
+                writer.end_element();
+            }
+            roxmltree::NodeType::Text => {
+                writer.write_text(node.text().unwrap());
+            }
+            _ => {}
+        }
+    }
+
+    write_node(root, &mut writer);
+    writer.end_document()
+}
+
 impl Quantity<&[(&str, Color, f64)]> {
     pub fn make_pie(self) -> Result<Image, ImageError> {
         let mut svg = String::new();
@@ -137,13 +190,15 @@ impl Quantity<&[(&str, Color, f64)]> {
             let labels = data.clone().map(|(label, _, _)| label).collect::<Vec<_>>();
 
             let mut pie = Pie::new(&center, &radius, &sizes, &colors, &labels);
-            pie.label_style(("Roboto", 20).into_font());
+            pie.label_style(("Roboto", 16).into_font());
             drawing_area.draw(&pie).expect("Couldn't draw pie chart");
 
             drawing_area
                 .present()
                 .expect("Couldn't finalize pie chart graphic");
         }
+
+        let svg = remove_width_height(svg);
         Ok(Image {
             svg,
             alt: self.name,

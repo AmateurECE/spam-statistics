@@ -16,4 +16,6 @@ mime = { version = "0.3.17", default-features = false }
 plotters = "0.3.7"
 plotters-svg = "0.3.7"
 regex = { version = "1.11.1", default-features = false }
+roxmltree = "0.20.0"
 thiserror = { version = "2.0.12", default-features = false }
+xmlwriter = "0.1.0"
