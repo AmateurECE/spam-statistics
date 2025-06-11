@@ -2,19 +2,6 @@ use std::collections::HashMap;
 
 use chrono::NaiveDate;
 
-macro_rules! impl_into_iterator {
-    ($owner:ty, $datum:ty, $field:tt) => {
-        impl<'a> IntoIterator for &'a $owner {
-            type Item = &'a $datum;
-            type IntoIter = <&'a Vec<$datum> as IntoIterator>::IntoIter;
-
-            fn into_iter(self) -> Self::IntoIter {
-                (&self.$field).into_iter()
-            }
-        }
-    };
-}
-
 /// A [SpamResult] is the value assigned to an email by Rspamd that summarizes its spam or ham
 /// -like attributes.
 pub type SpamResult = f64;
@@ -34,33 +21,23 @@ pub struct SpamEmail {
 pub type SpamResults = Vec<SpamEmail>;
 
 /// Spam results are sorted into integer-sized bins for calculating the distribution.
-pub type SpamResultBin = i64;
+pub type SpamResultBin = i32;
 
-/// The distribution of the frequency of [SpamResult]s over a given bin size.
-pub struct SpamResultsDistribution(Vec<(SpamResultBin, Occurrences)>);
+/// The [SpamResult]s of the emails over integer-sized bins.
+pub fn quantize_spam_results<'a, I>(iter: I) -> Vec<SpamResultBin>
+where
+    I: Iterator<Item = &'a SpamEmail>,
+{
+    iter.map(|email| email.spam_result as SpamResultBin)
+        .collect::<Vec<_>>()
+}
 
-impl_into_iterator!(SpamResultsDistribution, (SpamResultBin, Occurrences), 0);
-
-impl From<&SpamResults> for SpamResultsDistribution {
-    fn from(value: &SpamResults) -> Self {
-        let mut bins: HashMap<SpamResultBin, Occurrences> = HashMap::new();
-        for email in value {
-            let bin = email.spam_result as SpamResultBin;
-            *bins.entry(bin).or_insert(0) += 1;
-        }
-
-        let keys = bins.keys();
-        let Some(min) = keys.clone().min() else {
-            return SpamResultsDistribution(Vec::new());
-        };
-        // INVARIANT: If there is a min, there is definitely a max.
-        let max = keys.max().unwrap();
-
-        let bins = (*min..*max)
-            .map(|bin| (bin, *bins.get(&bin).unwrap_or(&0)))
-            .collect();
-        SpamResultsDistribution(bins)
-    }
+/// Return a list of the date received for each spam email.
+pub fn dates_received<'a, I>(iter: I) -> Vec<NaiveDate>
+where
+    I: Iterator<Item = &'a SpamEmail>,
+{
+    iter.map(|email| email.date_received).collect::<Vec<_>>()
 }
 
 #[derive(Default)]
@@ -69,7 +46,10 @@ struct SpamCount {
     ham: Occurrences,
 }
 
-fn spam_counts(emails: &SpamResults) -> Vec<(NaiveDate, SpamCount)> {
+fn spam_counts<'a, I>(emails: I) -> Vec<(NaiveDate, SpamCount)>
+where
+    I: Iterator<Item = &'a SpamEmail> + Clone,
+{
     let mut counts = HashMap::new();
     for email in emails {
         let count: &mut SpamCount = counts.entry(email.date_received).or_default();
@@ -107,37 +87,16 @@ fn spam_counts(emails: &SpamResults) -> Vec<(NaiveDate, SpamCount)> {
 }
 
 /// The percentage of correctly classified spam received on each day.
-pub struct SpamRateDistribution(Vec<(NaiveDate, f64)>);
-
-impl_into_iterator!(SpamRateDistribution, (NaiveDate, f64), 0);
-
-impl From<&SpamResults> for SpamRateDistribution {
-    fn from(value: &SpamResults) -> Self {
-        SpamRateDistribution(
-            spam_counts(value)
-                .into_iter()
-                .map(|(date, count)| {
-                    let spam = count.spam as f64;
-                    let ham = count.ham as f64;
-                    (date, ham / (spam + ham))
-                })
-                .collect(),
-        )
-    }
-}
-
-/// The distribution total spam received per day.
-pub struct TotalSpamDistribution(Vec<(NaiveDate, Occurrences)>);
-
-impl_into_iterator!(TotalSpamDistribution, (NaiveDate, Occurrences), 0);
-
-impl From<&SpamResults> for TotalSpamDistribution {
-    fn from(value: &SpamResults) -> Self {
-        TotalSpamDistribution(
-            spam_counts(value)
-                .into_iter()
-                .map(|(date, count)| (date, (count.spam + count.ham)))
-                .collect(),
-        )
-    }
+pub fn misclassification_rate<'a, I>(iter: I) -> Vec<(NaiveDate, f64)>
+where
+    I: Iterator<Item = &'a SpamEmail> + Clone,
+{
+    spam_counts(iter)
+        .into_iter()
+        .map(|(date, count)| {
+            let spam = count.spam as f64;
+            let ham = count.ham as f64;
+            (date, ham / (spam + ham))
+        })
+        .collect()
 }

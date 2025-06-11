@@ -5,9 +5,7 @@ use lettre::{SmtpTransport, Transport};
 use plot::{Color, Image, PieSlice, Quantity};
 use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
 use spam::load_spam_results;
-use statistics::{
-    SpamRateDistribution, SpamResults, SpamResultsDistribution, TotalSpamDistribution,
-};
+use statistics::{dates_received, misclassification_rate, quantize_spam_results};
 use std::{
     ffi::{c_char, CStr},
     io,
@@ -102,7 +100,7 @@ where
             name: format!("X-Spam-Result Distribution for {}", domain),
             domain: "Spam Result".into(),
             range: "Occurrences".into(),
-            data: <SpamResultsDistribution as From<&SpamResults>>::from(&spam_results),
+            data: quantize_spam_results(spam_results.iter()).as_slice(),
         }
         .make_histogram(),
         // Histogram of spam classification performance
@@ -110,20 +108,20 @@ where
             name: format!("Spam Misclassification Rate for {}", domain),
             domain: "Date".into(),
             range: "Percent".into(),
-            data: <SpamRateDistribution as From<&SpamResults>>::from(&spam_results),
+            data: misclassification_rate(spam_results.iter()).as_slice(),
         }
-        .make_histogram(),
+        .make_linechart(),
         // Histogram of spam received per day
         Quantity {
             name: format!("Daily Received Spam for {}", domain),
             domain: "Date".into(),
             range: "Occurrences".into(),
-            data: <TotalSpamDistribution as From<&SpamResults>>::from(&spam_results),
+            data: dates_received(spam_results.iter()).as_slice(),
         }
         .make_histogram(),
     ]
     .into_iter()
-    .collect::<Result<Vec<Image>, _>>()?;
+    .collect::<Vec<Image>>();
 
     let template = MessageTemplate::new(domain.into(), "postmaster".into())?;
     let email = template.make_message(images.into_iter(), statistics.into_iter())?;

@@ -1,12 +1,17 @@
-use core::{fmt, slice};
+use chrono::NaiveDate;
+use core::fmt;
 use full_palette::{ORANGE, PURPLE};
-use plotters::{prelude::*, style::full_palette::INDIGO};
+use plotters::{
+    coord::{
+        ranged1d::{AsRangedCoord, DefaultFormatting, SegmentedCoord, ValueFormatter},
+        types::RangedSlice,
+    },
+    prelude::*,
+    style::{full_palette::INDIGO, Color as _},
+};
 use plotters_svg::SVGBackend;
 use roxmltree::Document;
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::{cell::LazyCell, collections::HashMap};
 use xmlwriter::{Indent, Options, XmlWriter};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -26,14 +31,6 @@ pub struct Image {
     pub alt: String,
 }
 
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum ImageError {
-    #[error("failed to communicate with gnuplot")]
-    Pipe,
-    #[error("gnuplot")]
-    Gnuplot(String),
-}
-
 pub struct PieSlice {
     pub label: String,
     pub color: Color,
@@ -47,18 +44,8 @@ pub struct Quantity<D> {
     pub data: D,
 }
 
-const FONT_SIZE: i32 = 16;
-
-static GNUPLOT_SCRIPT: &str = r#"
-set terminal svg size 600,400 dynamic enhanced fname 'Arial'
-set output
-
-set style data histogram
-set style fill solid border -1
-set boxwidth 0.5
-set xtics rotate by -45
-unset key
-"#;
+const FONT: LazyCell<FontDesc<'static>> = LazyCell::new(|| ("Roboto", 16).into_font());
+const IMAGE_SIZE: (u32, u32) = (600, 400);
 
 impl From<Color> for RGBColor {
     fn from(value: Color) -> RGBColor {
@@ -74,56 +61,163 @@ impl From<Color> for RGBColor {
     }
 }
 
-impl<D> Quantity<D> {
-    pub fn make_histogram<X, Y>(self) -> Result<Image, ImageError>
+pub trait ChartRange {
+    type Value;
+    fn chart_range<I>(iter: I) -> Option<(Self::Value, Self::Value)>
     where
-        for<'a> &'a D: IntoIterator<IntoIter = slice::Iter<'a, (X, Y)>>,
-        X: fmt::Display,
-        Y: fmt::Display,
+        I: Iterator<Item = Self::Value> + Clone;
+}
+
+impl ChartRange for NaiveDate {
+    type Value = NaiveDate;
+    fn chart_range<I>(iter: I) -> Option<(Self::Value, Self::Value)>
+    where
+        I: Iterator<Item = Self::Value> + Clone,
     {
-        let data = self.data.into_iter();
+        let Some(min) = iter.clone().min() else {
+            return None;
+        };
+        let Some(max) = iter.max() else {
+            return None;
+        };
+        Some((min, max))
+    }
+}
 
-        let mut script = GNUPLOT_SCRIPT.to_string();
-        script += &format!("set ylabel \"{}\"\n", self.range);
-        script += &format!("set xlabel \"{}\"\n", self.domain);
-        script += &format!("set title \"{}\"\n", self.name);
-        script += &format!("plot '-' using 2:xtic(1) title '{}'\n", self.name);
-        script += &data
-            // TODO: Kind of a hack to wrap the x value in double quotes. Can we pull this out into
-            // a trait instead?
-            .map(|(x, y)| format!("\"{}\" {}", x, y))
-            .collect::<Vec<_>>()
-            .join("\n");
-        script += "e\n";
+impl ChartRange for f64 {
+    type Value = f64;
+    fn chart_range<I>(iter: I) -> Option<(Self::Value, Self::Value)>
+    where
+        I: Iterator<Item = Self::Value> + Clone,
+    {
+        let min = iter.clone().fold(f64::INFINITY, |a, b| a.min(b));
+        let max = iter.clone().fold(f64::MIN, |a, b| a.max(b));
+        Some((min, max))
+    }
+}
 
-        let mut gnuplot = Command::new("gnuplot")
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| ImageError::Gnuplot(e.to_string()))?;
+fn histogram_y_range<X>(data: &[X]) -> usize
+where
+    X: core::cmp::Eq + core::hash::Hash + Copy,
+{
+    let mut counts: HashMap<X, usize> = HashMap::new();
+    for x in data {
+        *counts.entry(*x).or_insert(0) += 1;
+    }
+    *counts.values().max().unwrap()
+}
 
+impl<X, R> Quantity<&[X]>
+where
+    X: fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + Ord + core::hash::Hash,
+    for<'a> &'a [X]: AsRangedCoord<CoordDescType = RangedSlice<'a, X>, Value = &'a X>,
+    std::ops::Range<X>: AsRangedCoord<CoordDescType = R, Value = X>,
+    R: Ranged<ValueType = X> + DiscreteRanged + Clone,
+    SegmentedCoord<R>: ValueFormatter<SegmentValue<<R as Ranged>::ValueType>>,
+{
+    pub fn make_histogram(self) -> Image {
+        let mut svg = String::new();
+        let (min, max) = (
+            *self.data.iter().min().unwrap(),
+            *self.data.iter().max().unwrap(),
+        );
+        let y_max = histogram_y_range(self.data);
         {
-            let mut stdin = gnuplot.stdin.take().ok_or(ImageError::Pipe)?;
-            stdin
-                .write_all(script.as_bytes())
-                .map_err(|_| ImageError::Pipe)?;
+            let drawing_area = SVGBackend::with_string(&mut svg, IMAGE_SIZE).into_drawing_area();
+            drawing_area
+                .fill(&WHITE)
+                .expect("couldn't fill chart background");
+            let mut chart_builder = ChartBuilder::on(&drawing_area);
+            let mut chart_context = chart_builder
+                .margin(5)
+                .caption(&self.name, FONT.clone())
+                .set_left_and_bottom_label_area_size(40)
+                .build_cartesian_2d((min..max).into_segmented(), 0..y_max)
+                .expect("couldn't build cartesian space");
+            chart_context
+                .configure_mesh()
+                .x_desc(self.domain)
+                .y_desc(self.range)
+                .axis_desc_style(FONT.clone())
+                .draw()
+                .expect("couldn't draw axes");
+            chart_context
+                .draw_series(
+                    Histogram::vertical(&chart_context)
+                        .style(PURPLE.filled())
+                        .data(self.data.iter().map(|x| (*x, 1))),
+                )
+                .expect("couldn't draw histogram series");
+
+            drawing_area
+                .present()
+                .expect("couldn't finalize pie chart graphic");
         }
 
-        let output = gnuplot
-            .wait_with_output()
-            .map_err(|e| ImageError::Gnuplot(e.to_string()))?;
-        if !output.status.success() {
-            let error = ImageError::Gnuplot(
-                String::from_utf8(output.stderr).map_err(|_| ImageError::Pipe)?,
-            );
-            return Err(error);
-        }
-
-        Ok(Image {
-            svg: String::from_utf8(output.stdout).map_err(|_| ImageError::Pipe)?,
+        let svg = remove_width_height(svg);
+        Image {
+            svg,
             alt: self.name,
-        })
+        }
+    }
+}
+
+impl<'a, X, Y, R, S> Quantity<&[(X, Y)]>
+where
+    X: ChartRange<Value = X> + fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + 'static,
+    Y: ChartRange<Value = Y> + fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + 'static,
+    std::ops::Range<X>: AsRangedCoord<CoordDescType = R, Value = X>,
+    R: Ranged<FormatOption = DefaultFormatting, ValueType = X> + DiscreteRanged + Clone,
+    std::ops::Range<Y>: AsRangedCoord<CoordDescType = S, Value = Y>,
+    S: Ranged<ValueType = Y> + ValueFormatter<Y> + Clone,
+{
+    pub fn make_linechart(self) -> Image {
+        let mut svg = String::new();
+        let domain = self.data.iter().map(|(x, _)| *x);
+        let (x_min, x_max) = X::chart_range(domain).unwrap();
+        let range = self.data.iter().map(|(_, y)| *y);
+        let (y_min, y_max) = Y::chart_range(range).unwrap();
+        {
+            let drawing_area = SVGBackend::with_string(&mut svg, IMAGE_SIZE).into_drawing_area();
+            drawing_area
+                .fill(&WHITE)
+                .expect("couldn't fill chart background");
+            let mut chart_builder = ChartBuilder::on(&drawing_area);
+            let mut chart_context = chart_builder
+                .margin(5)
+                .caption(&self.name, FONT.clone())
+                .set_left_and_bottom_label_area_size(40)
+                .build_cartesian_2d(x_min..x_max, y_min..y_max)
+                .expect("couldn't build cartesian space");
+            chart_context
+                .configure_mesh()
+                .x_desc(self.domain)
+                .y_desc(self.range)
+                .axis_desc_style(FONT.clone())
+                .draw()
+                .expect("couldn't draw axes");
+
+            chart_context
+                .draw_series(LineSeries::new(self.data.iter().cloned(), PURPLE))
+                .expect("couldn't draw histogram series");
+            chart_context
+                .draw_series(
+                    self.data
+                        .iter()
+                        .map(|(x, y)| Circle::new((*x, *y), 3, PURPLE.filled())),
+                )
+                .expect("couldn't draw histogram series");
+
+            drawing_area
+                .present()
+                .expect("couldn't finalize pie chart graphic");
+        }
+
+        let svg = remove_width_height(svg);
+        Image {
+            svg,
+            alt: self.name,
+        }
     }
 }
 
@@ -180,10 +274,10 @@ fn remove_width_height(svg_input: String) -> String {
 }
 
 impl Quantity<&[PieSlice]> {
-    pub fn make_pie(self) -> Result<Image, ImageError> {
+    pub fn make_pie(self) -> Image {
         let mut svg = String::new();
         {
-            let drawing_area = SVGBackend::with_string(&mut svg, (600, 400)).into_drawing_area();
+            let drawing_area = SVGBackend::with_string(&mut svg, IMAGE_SIZE).into_drawing_area();
             drawing_area.fill(&WHITE).expect("Couldn't fill background");
 
             let center = (300, 200);
@@ -199,9 +293,9 @@ impl Quantity<&[PieSlice]> {
             let labels = data.clone().map(|slice| &slice.label).collect::<Vec<_>>();
 
             let mut pie = Pie::new(&center, &radius, &sizes, &colors, &labels);
-            pie.label_style(("Roboto", FONT_SIZE).into_font());
+            pie.label_style(FONT.clone());
             drawing_area
-                .titled(&self.name, ("Roboto", FONT_SIZE).into_font())
+                .titled(&self.name, FONT.clone())
                 .expect("Couldn't apply title to chart")
                 .draw(&pie)
                 .expect("Couldn't draw pie chart");
@@ -212,9 +306,9 @@ impl Quantity<&[PieSlice]> {
         }
 
         let svg = remove_width_height(svg);
-        Ok(Image {
+        Image {
             svg,
             alt: self.name,
-        })
+        }
     }
 }
