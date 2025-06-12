@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use core::fmt;
 use full_palette::{ORANGE, PURPLE};
 use plotters::{
+    backend::{PixelFormat, RGBPixel},
     coord::{
         ranged1d::{AsRangedCoord, DefaultFormatting, SegmentedCoord, ValueFormatter},
         types::RangedSlice,
@@ -9,10 +10,7 @@ use plotters::{
     prelude::*,
     style::{full_palette::INDIGO, Color as _},
 };
-use plotters_svg::SVGBackend;
-use roxmltree::Document;
-use std::{cell::LazyCell, collections::HashMap};
-use xmlwriter::{Indent, Options, XmlWriter};
+use std::{cell::LazyCell, collections::HashMap, io::Cursor};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[allow(dead_code)]
@@ -27,7 +25,7 @@ pub enum Color {
 }
 
 pub struct Image {
-    pub svg: String,
+    pub png: Vec<u8>,
     pub alt: String,
 }
 
@@ -46,6 +44,13 @@ pub struct Quantity<D> {
 
 const FONT: LazyCell<FontDesc<'static>> = LazyCell::new(|| ("Roboto", 16).into_font());
 const IMAGE_SIZE: (u32, u32) = (600, 400);
+
+const fn buffer_size() -> usize {
+    let (width, height) = IMAGE_SIZE;
+    let width: usize = width as usize;
+    let height: usize = height as usize;
+    width * height * RGBPixel::PIXEL_SIZE
+}
 
 impl From<Color> for RGBColor {
     fn from(value: Color) -> RGBColor {
@@ -107,6 +112,19 @@ where
     *counts.values().max().unwrap()
 }
 
+fn into_png(bitmap: Vec<u8>) -> Vec<u8> {
+    let mut png = Vec::<u8>::new();
+    {
+        let cursor = Cursor::new(&mut png);
+        let (width, height) = IMAGE_SIZE;
+        let mut encoder = png::Encoder::new(cursor, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&bitmap).unwrap();
+    }
+    png
+}
+
 impl<X, R> Quantity<&[X]>
 where
     X: fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + Ord + core::hash::Hash,
@@ -116,14 +134,15 @@ where
     SegmentedCoord<R>: ValueFormatter<SegmentValue<<R as Ranged>::ValueType>>,
 {
     pub fn make_histogram(self) -> Image {
-        let mut svg = String::new();
+        let mut bitmap = vec![0; buffer_size()];
         let (min, max) = (
             *self.data.iter().min().unwrap(),
             *self.data.iter().max().unwrap(),
         );
         let y_max = histogram_y_range(self.data);
         {
-            let drawing_area = SVGBackend::with_string(&mut svg, IMAGE_SIZE).into_drawing_area();
+            let drawing_area =
+                BitMapBackend::with_buffer(&mut bitmap, IMAGE_SIZE).into_drawing_area();
             drawing_area
                 .fill(&WHITE)
                 .expect("couldn't fill chart background");
@@ -154,9 +173,8 @@ where
                 .expect("couldn't finalize pie chart graphic");
         }
 
-        let svg = remove_width_height(svg);
         Image {
-            svg,
+            png: into_png(bitmap),
             alt: self.name,
         }
     }
@@ -172,13 +190,14 @@ where
     S: Ranged<ValueType = Y> + ValueFormatter<Y> + Clone,
 {
     pub fn make_linechart(self) -> Image {
-        let mut svg = String::new();
+        let mut bitmap = vec![0; buffer_size()];
         let domain = self.data.iter().map(|(x, _)| *x);
         let (x_min, x_max) = X::chart_range(domain).unwrap();
         let range = self.data.iter().map(|(_, y)| *y);
         let (y_min, y_max) = Y::chart_range(range).unwrap();
         {
-            let drawing_area = SVGBackend::with_string(&mut svg, IMAGE_SIZE).into_drawing_area();
+            let drawing_area =
+                BitMapBackend::with_buffer(&mut bitmap, IMAGE_SIZE).into_drawing_area();
             drawing_area
                 .fill(&WHITE)
                 .expect("couldn't fill chart background");
@@ -213,71 +232,19 @@ where
                 .expect("couldn't finalize pie chart graphic");
         }
 
-        let svg = remove_width_height(svg);
         Image {
-            svg,
+            png: into_png(bitmap),
             alt: self.name,
         }
     }
 }
 
-fn remove_width_height(svg_input: String) -> String {
-    let doc = Document::parse(&svg_input).expect("Failed to parse SVG");
-    let root = doc.root_element();
-
-    let mut writer = XmlWriter::new(Options {
-        indent: Indent::None,
-        ..Default::default()
-    });
-
-    fn write_node(node: roxmltree::Node, writer: &mut XmlWriter) {
-        match node.node_type() {
-            roxmltree::NodeType::Element => {
-                writer.start_element(node.tag_name().name());
-
-                // Copy attributes, excluding width and height for the <svg> element
-                for attr in node.attributes() {
-                    if node.tag_name().name() == "svg"
-                        && (attr.name() == "width" || attr.name() == "height")
-                    {
-                        continue;
-                    }
-                    writer.write_attribute(attr.name(), attr.value());
-                }
-
-                // Have to render XML namespaces into the output, or else some mail clients
-                // (Thunderbird) don't want to render it.
-                for attr in node.namespaces() {
-                    if let Some(name) = attr.name() {
-                        let name = "xmlns:".to_string() + name;
-                        writer.write_attribute(&name, attr.uri());
-                    } else {
-                        writer.write_attribute("xmlns", attr.uri());
-                    }
-                }
-
-                for child in node.children() {
-                    write_node(child, writer);
-                }
-
-                writer.end_element();
-            }
-            roxmltree::NodeType::Text => {
-                writer.write_text(node.text().unwrap());
-            }
-            _ => {}
-        }
-    }
-
-    write_node(root, &mut writer);
-    writer.end_document()
-}
-
 impl Quantity<&[PieSlice]> {
     pub fn make_pie(self) -> Image {
-        let mut svg = String::new();
+        let mut bitmap = vec![0; buffer_size()];
         {
-            let drawing_area = SVGBackend::with_string(&mut svg, IMAGE_SIZE).into_drawing_area();
+            let drawing_area =
+                BitMapBackend::with_buffer(&mut bitmap, IMAGE_SIZE).into_drawing_area();
             drawing_area.fill(&WHITE).expect("Couldn't fill background");
 
             let center = (300, 200);
@@ -305,9 +272,8 @@ impl Quantity<&[PieSlice]> {
                 .expect("Couldn't finalize pie chart graphic");
         }
 
-        let svg = remove_width_height(svg);
         Image {
-            svg,
+            png: into_png(bitmap),
             alt: self.name,
         }
     }
