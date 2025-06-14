@@ -49,7 +49,9 @@ pub struct Quantity<D> {
     pub data: D,
 }
 
-const FONT: LazyCell<FontDesc<'static>> = LazyCell::new(|| ("Roboto", 16).into_font());
+thread_local! {
+static FONT: LazyCell<FontDesc<'static>> = LazyCell::new(|| ("Roboto", 16).into_font());
+}
 const IMAGE_SIZE: (u32, u32) = (600, 400);
 
 const fn buffer_size() -> usize {
@@ -86,12 +88,8 @@ impl ChartRange for NaiveDate {
     where
         I: Iterator<Item = Self::Value> + Clone,
     {
-        let Some(min) = iter.clone().min() else {
-            return None;
-        };
-        let Some(max) = iter.max() else {
-            return None;
-        };
+        let min = iter.clone().min()?;
+        let max = iter.max()?;
         Some((min, max))
     }
 }
@@ -146,6 +144,7 @@ where
             *self.data.iter().min().unwrap(),
             *self.data.iter().max().unwrap(),
         );
+        let font = FONT.with(|f| (*f).clone());
         let y_max = histogram_y_range(self.data);
         {
             let drawing_area =
@@ -156,7 +155,7 @@ where
             let mut chart_builder = ChartBuilder::on(&drawing_area);
             let mut chart_context = chart_builder
                 .margin(5)
-                .caption(&self.name, FONT.clone())
+                .caption(&self.name, font.clone())
                 .set_left_and_bottom_label_area_size(40)
                 .build_cartesian_2d((min..max).into_segmented(), 0..y_max)
                 .expect("couldn't build cartesian space");
@@ -164,7 +163,7 @@ where
                 .configure_mesh()
                 .x_desc(self.domain)
                 .y_desc(self.range)
-                .axis_desc_style(FONT.clone())
+                .axis_desc_style(font)
                 .draw()
                 .expect("couldn't draw axes");
             chart_context
@@ -187,7 +186,7 @@ where
     }
 }
 
-impl<'a, X, Y, R, S> Quantity<&[(X, Y)]>
+impl<X, Y, R, S> Quantity<&[(X, Y)]>
 where
     X: ChartRange<Value = X> + fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + 'static,
     Y: ChartRange<Value = Y> + fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + 'static,
@@ -202,6 +201,7 @@ where
         let (x_min, x_max) = X::chart_range(domain).unwrap();
         let range = self.data.iter().map(|(_, y)| *y);
         let (y_min, y_max) = Y::chart_range(range).unwrap();
+        let font = FONT.with(|f| (*f).clone());
         {
             let drawing_area =
                 BitMapBackend::with_buffer(&mut bitmap, IMAGE_SIZE).into_drawing_area();
@@ -211,7 +211,7 @@ where
             let mut chart_builder = ChartBuilder::on(&drawing_area);
             let mut chart_context = chart_builder
                 .margin(5)
-                .caption(&self.name, FONT.clone())
+                .caption(&self.name, font.clone())
                 .set_left_and_bottom_label_area_size(40)
                 .build_cartesian_2d(x_min..x_max, y_min..y_max)
                 .expect("couldn't build cartesian space");
@@ -219,7 +219,7 @@ where
                 .configure_mesh()
                 .x_desc(self.domain)
                 .y_desc(self.range)
-                .axis_desc_style(FONT.clone())
+                .axis_desc_style(font)
                 .draw()
                 .expect("couldn't draw axes");
 
@@ -248,11 +248,15 @@ where
 
 impl Quantity<&[(NaiveDate, SpamResult)]> {
     pub fn make_boxplot(self) -> Image {
-        let dates = self
+        let mut dates = self
             .data
             .iter()
             .map(|(date, _)| date)
-            .collect::<HashSet<&NaiveDate>>();
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        dates.sort();
+        let font = FONT.with(|f| (*f).clone());
         let mut bitmap = vec![0u8; buffer_size()];
         {
             let drawing_area =
@@ -260,12 +264,12 @@ impl Quantity<&[(NaiveDate, SpamResult)]> {
             drawing_area.fill(&WHITE).expect("couldn't fill background");
 
             let values_range = fitting_range(self.data.iter().map(|(_, result)| result));
-            let x_spec = dates.iter().cloned().collect::<Vec<_>>();
+            let x_spec = dates.to_vec();
             let (start, end) = (values_range.start as f32, values_range.end as f32);
             let mut chart = ChartBuilder::on(&drawing_area)
                 .x_label_area_size(40)
                 .y_label_area_size(40)
-                .caption(&self.name, FONT.clone())
+                .caption(&self.name, font.clone())
                 .build_cartesian_2d(
                     x_spec.into_segmented(),
                     (start - start * 0.05)..(end + end * 0.05),
@@ -299,6 +303,7 @@ impl Quantity<&[(NaiveDate, SpamResult)]> {
 
 impl Quantity<&[PieSlice]> {
     pub fn make_pie(self) -> Image {
+        let font = FONT.with(|f| (*f).clone());
         let mut bitmap = vec![0; buffer_size()];
         {
             let drawing_area =
@@ -318,9 +323,9 @@ impl Quantity<&[PieSlice]> {
             let labels = data.clone().map(|slice| &slice.label).collect::<Vec<_>>();
 
             let mut pie = Pie::new(&center, &radius, &sizes, &colors, &labels);
-            pie.label_style(FONT.clone());
+            pie.label_style(font.clone());
             drawing_area
-                .titled(&self.name, FONT.clone())
+                .titled(&self.name, font)
                 .expect("Couldn't apply title to chart")
                 .draw(&pie)
                 .expect("Couldn't draw pie chart");
