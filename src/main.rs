@@ -86,6 +86,11 @@ where
     } = load_rspamd_statistics()?;
     let message_actions = action_breakdown(message_actions);
 
+    let spam_scores = spam_results
+        .iter()
+        .map(|email| (email.date_received, email.spam_result))
+        .collect::<Vec<_>>();
+
     let images = [
         // Rspamd action breakdown
         Quantity {
@@ -111,6 +116,14 @@ where
             data: misclassification_rate(spam_results.iter()).as_slice(),
         }
         .make_linechart(),
+        // Distribution of daily spam results
+        Quantity {
+            name: format!("Daily Spam Results for {}", domain),
+            domain: "Date".into(),
+            range: "X-Spam-Result".into(),
+            data: spam_scores.as_slice(),
+        }
+        .make_boxplot(),
         // Histogram of spam received per day
         Quantity {
             name: format!("Daily Received Spam for {}", domain),

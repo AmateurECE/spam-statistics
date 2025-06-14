@@ -7,10 +7,17 @@ use plotters::{
         ranged1d::{AsRangedCoord, DefaultFormatting, SegmentedCoord, ValueFormatter},
         types::RangedSlice,
     },
+    data::fitting_range,
     prelude::*,
     style::{full_palette::INDIGO, Color as _},
 };
-use std::{cell::LazyCell, collections::HashMap, io::Cursor};
+use std::{
+    cell::LazyCell,
+    collections::{HashMap, HashSet},
+    io::Cursor,
+};
+
+use crate::statistics::SpamResult;
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[allow(dead_code)]
@@ -230,6 +237,57 @@ where
             drawing_area
                 .present()
                 .expect("couldn't finalize pie chart graphic");
+        }
+
+        Image {
+            png: into_png(bitmap),
+            alt: self.name,
+        }
+    }
+}
+
+impl Quantity<&[(NaiveDate, SpamResult)]> {
+    pub fn make_boxplot(self) -> Image {
+        let dates = self
+            .data
+            .iter()
+            .map(|(date, _)| date)
+            .collect::<HashSet<&NaiveDate>>();
+        let mut bitmap = vec![0u8; buffer_size()];
+        {
+            let drawing_area =
+                BitMapBackend::with_buffer(&mut bitmap, IMAGE_SIZE).into_drawing_area();
+            drawing_area.fill(&WHITE).expect("couldn't fill background");
+
+            let values_range = fitting_range(self.data.iter().map(|(_, result)| result));
+            let x_spec = dates.iter().cloned().collect::<Vec<_>>();
+            let (start, end) = (values_range.start as f32, values_range.end as f32);
+            let mut chart = ChartBuilder::on(&drawing_area)
+                .x_label_area_size(40)
+                .y_label_area_size(40)
+                .caption(&self.name, FONT.clone())
+                .build_cartesian_2d(
+                    x_spec.into_segmented(),
+                    (start - start * 0.05)..(end + end * 0.05),
+                )
+                .expect("couldn't draw chart");
+            chart.configure_mesh().draw().expect("couldn't draw mesh");
+
+            chart
+                .draw_series(dates.iter().map(|date| {
+                    let series = Quartiles::new(
+                        &self
+                            .data
+                            .iter()
+                            .filter(|(received, _)| *received == **date)
+                            .map(|(_, result)| *result)
+                            .collect::<Vec<_>>(),
+                    );
+                    Boxplot::new_vertical(SegmentValue::CenterOf(date), &series)
+                }))
+                .expect("couldn't draw series");
+
+            drawing_area.present().expect("couldn't finalize boxplot");
         }
 
         Image {
