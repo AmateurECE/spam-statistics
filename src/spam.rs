@@ -81,7 +81,7 @@ where
 
             let unread = spam_folder.join("new");
             if unread.is_dir() {
-                let emails = read.read_dir()?.collect::<Result<Vec<DirEntry>, _>>()?;
+                let emails = unread.read_dir()?.collect::<Result<Vec<DirEntry>, _>>()?;
                 spam.extend(emails.into_iter().map(|entry| entry.path()));
             }
         }
