@@ -9,7 +9,7 @@ homepage = "https://github.com/AmateurECE/spam-statistics"
 anyhow = { version = "1.0.98", default-features = false }
 chrono = { version = "0.4.41", default-features = false }
 clap = { version = "4.5.38", features = ["std", "derive", "help"], default-features = false }
-email = { version = "0.0.21", default-features = false }
+email = { git = "https://github.com/niax/rust-email.git", rev = "d2b2697ce28e0cd58b6d403d4e1150a6cbdbd251", default-features = false }
 lettre = { version = "0.11.16", features = [ "builder", "smtp-transport" ], default-features = false }
 libc = "0.2.172"
 mime = { version = "0.3.17", default-features = false }
