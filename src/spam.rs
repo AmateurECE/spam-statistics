@@ -1,5 +1,5 @@
 use std::{
-    fs::{DirEntry, File},
+    fs::File,
     io::Read,
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -60,52 +60,85 @@ fn make_spam_email(message: String, date_received: NaiveDate) -> Result<SpamEmai
     })
 }
 
-fn list_spam<P>(virtual_mailbox_base: P) -> Result<Vec<PathBuf>, anyhow::Error>
+fn load_spam<P>(path: P) -> anyhow::Result<SpamEmail>
+where
+    P: AsRef<Path>,
+{
+    let mut file = File::open(&path)?;
+
+    // See maildir(5)
+    let date_received: DateTime<Local> = file.metadata()?.modified()?.into();
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    make_spam_email(contents, date_received.date_naive())
+}
+
+fn list_spam_maildir<P>(path: P) -> anyhow::Result<Vec<PathBuf>>
 where
     P: AsRef<Path>,
 {
     let mut spam: Vec<PathBuf> = Vec::new();
+    let spam_folder = path.as_ref().join(".Spam");
 
-    let domains = virtual_mailbox_base.as_ref().read_dir()?;
+    // See maildir(5)
+    let read = spam_folder.join("cur");
+    if read.is_dir() {
+        let mut emails = read
+            .read_dir()?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect::<Vec<PathBuf>>();
+        spam.append(&mut emails);
+    }
+
+    let unread = spam_folder.join("new");
+    if unread.is_dir() {
+        let mut emails = unread
+            .read_dir()?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect::<Vec<PathBuf>>();
+        spam.append(&mut emails);
+    }
+
+    Ok(spam)
+}
+
+pub fn load_spam_maildir<P>(path: P) -> anyhow::Result<SpamResults>
+where
+    P: AsRef<Path>,
+{
+    Ok(list_spam_maildir(path)?
+        .into_iter()
+        .filter_map(|email| load_spam(email).ok())
+        .collect::<SpamResults>())
+}
+
+fn list_spam_virtual_mailbox_base<P>(path: P) -> Result<Vec<PathBuf>, anyhow::Error>
+where
+    P: AsRef<Path>,
+{
+    let mut spam = Vec::new();
+    let domains = path.as_ref().read_dir()?;
     for domain in domains {
         let users = domain?.path().read_dir()?;
         for user in users {
-            let spam_folder = user?.path().join(".Spam");
-
-            // See maildir(5)
-            let read = spam_folder.join("cur");
-            if read.is_dir() {
-                let emails = read.read_dir()?.collect::<Result<Vec<DirEntry>, _>>()?;
-                spam.extend(emails.into_iter().map(|entry| entry.path()));
-            }
-
-            let unread = spam_folder.join("new");
-            if unread.is_dir() {
-                let emails = unread.read_dir()?.collect::<Result<Vec<DirEntry>, _>>()?;
-                spam.extend(emails.into_iter().map(|entry| entry.path()));
-            }
+            spam.append(&mut list_spam_maildir(user?.path())?);
         }
     }
 
     Ok(spam)
 }
 
-pub fn load_spam_results<P>(virtual_mailbox_base: P) -> Result<SpamResults, anyhow::Error>
+pub fn load_spam_virtual_mailbox_base<P>(path: P) -> Result<SpamResults, anyhow::Error>
 where
     P: AsRef<Path>,
 {
-    let spam = list_spam(virtual_mailbox_base)?;
+    let spam = list_spam_virtual_mailbox_base(path)?;
     let mut spam_results = Vec::new();
     for path in spam {
-        let mut file = File::open(&path)?;
-
-        // See maildir(5)
-        let date_received: DateTime<Local> = file.metadata()?.modified()?.into();
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        match make_spam_email(contents, date_received.date_naive()) {
+        match load_spam(path) {
             Ok(spam_email) => spam_results.push(spam_email),
             Err(error) => eprintln!("{}", error),
         }

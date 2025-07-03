@@ -4,7 +4,7 @@ use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
 use plot::{Color, Image, PieSlice, Quantity};
 use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
-use spam::load_spam_results;
+use spam::{load_spam_maildir, load_spam_virtual_mailbox_base};
 use statistics::{dates_received, misclassification_rate, quantize_spam_results};
 use std::{
     ffi::{c_char, CStr},
@@ -70,11 +70,21 @@ fn action_breakdown(
 }
 
 #[allow(dead_code)]
-fn spam_statistics<P>(domain: &str, virtual_mailbox_base: P) -> Result<(), Box<dyn Error>>
+fn spam_statistics<P, Q>(
+    domain: &str,
+    virtual_mailbox_base: P,
+    maildirs: &[Q],
+) -> Result<(), Box<dyn Error>>
 where
     P: AsRef<Path>,
+    Q: AsRef<Path>,
 {
-    let spam_results = load_spam_results(virtual_mailbox_base)?;
+    let mut spam_results = load_spam_virtual_mailbox_base(virtual_mailbox_base)?;
+    for maildir in maildirs {
+        if let Ok(results) = load_spam_maildir(maildir) {
+            spam_results.extend(results);
+        }
+    }
     if spam_results.is_empty() {
         println!("No spam.");
         return Ok(());
@@ -156,10 +166,14 @@ struct Args {
     /// The virtual mailbox base path
     #[clap(value_parser, short, long)]
     path: String,
+
+    /// Additional Maildir paths to parse through
+    #[clap(value_parser, short, long)]
+    maildirs: Vec<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let domain = get_hostname()?;
-    spam_statistics(&domain, args.path)
+    spam_statistics(&domain, args.path, &args.maildirs)
 }
