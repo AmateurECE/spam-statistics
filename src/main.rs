@@ -79,75 +79,78 @@ where
     P: AsRef<Path>,
     Q: AsRef<Path>,
 {
-    let mut spam_results = load_spam_virtual_mailbox_base(virtual_mailbox_base)?;
-    for maildir in maildirs {
-        if let Ok(results) = load_spam_maildir(maildir) {
-            spam_results.extend(results);
-        }
-    }
-    if spam_results.is_empty() {
-        println!("No spam.");
-        return Ok(());
-    }
-
     let RspamdStatistics {
         statistics,
         message_actions,
     } = load_rspamd_statistics()?;
     let message_actions = action_breakdown(message_actions);
 
+    // Rspamd action breakdown
+    let rspamd_image = Quantity {
+        name: format!("Breakdown of Rspamd Actions for {}", domain),
+        domain: "Action".into(),
+        range: "Percentage".into(),
+        data: message_actions.as_slice(),
+    }
+    .make_pie();
+
+    let mut spam_results = load_spam_virtual_mailbox_base(virtual_mailbox_base)?;
+    for maildir in maildirs {
+        if let Ok(results) = load_spam_maildir(maildir) {
+            spam_results.extend(results);
+        }
+    }
+
     let spam_scores = spam_results
         .iter()
         .map(|email| (email.date_received, email.spam_result))
         .collect::<Vec<_>>();
 
-    let images = [
-        // Rspamd action breakdown
-        Quantity {
-            name: format!("Breakdown of Rspamd Actions for {}", domain),
-            domain: "Action".into(),
-            range: "Percentage".into(),
-            data: message_actions.as_slice(),
-        }
-        .make_pie(),
-        // Histogram based on X-Spam-Result values
-        Quantity {
-            name: format!("X-Spam-Result Distribution for {}", domain),
-            domain: "Spam Result".into(),
-            range: "Occurrences".into(),
-            data: quantize_spam_results(spam_results.iter()).as_slice(),
-        }
-        .make_histogram(),
-        // Histogram of spam classification performance
-        Quantity {
-            name: format!("Spam Misclassification Rate for {}", domain),
-            domain: "Date".into(),
-            range: "Percent".into(),
-            data: misclassification_rate(spam_results.iter()).as_slice(),
-        }
-        .make_linechart(),
-        // Distribution of daily spam results
-        Quantity {
-            name: format!("Daily Spam Results for {}", domain),
-            domain: "Date".into(),
-            range: "X-Spam-Result".into(),
-            data: spam_scores.as_slice(),
-        }
-        .make_boxplot(),
-        // Histogram of spam received per day
-        Quantity {
-            name: format!("Daily Received Spam for {}", domain),
-            domain: "Date".into(),
-            range: "Occurrences".into(),
-            data: dates_received(spam_results.iter()).as_slice(),
-        }
-        .make_histogram(),
-    ]
-    .into_iter()
-    .collect::<Vec<Image>>();
+    let images = if !spam_results.is_empty() {
+        vec![
+            // Histogram based on X-Spam-Result values
+            Quantity {
+                name: format!("X-Spam-Result Distribution for {}", domain),
+                domain: "Spam Result".into(),
+                range: "Occurrences".into(),
+                data: quantize_spam_results(spam_results.iter()).as_slice(),
+            }
+            .make_histogram(),
+            // Histogram of spam classification performance
+            Quantity {
+                name: format!("Spam Misclassification Rate for {}", domain),
+                domain: "Date".into(),
+                range: "Percent".into(),
+                data: misclassification_rate(spam_results.iter()).as_slice(),
+            }
+            .make_linechart(),
+            // Distribution of daily spam results
+            Quantity {
+                name: format!("Daily Spam Results for {}", domain),
+                domain: "Date".into(),
+                range: "X-Spam-Result".into(),
+                data: spam_scores.as_slice(),
+            }
+            .make_boxplot(),
+            // Histogram of spam received per day
+            Quantity {
+                name: format!("Daily Received Spam for {}", domain),
+                domain: "Date".into(),
+                range: "Occurrences".into(),
+                data: dates_received(spam_results.iter()).as_slice(),
+            }
+            .make_histogram(),
+        ]
+    } else {
+        println!("No spam.");
+        vec![]
+    };
 
     let template = MessageTemplate::new(domain.into(), "postmaster".into())?;
-    let email = template.make_message(images.into_iter(), statistics.into_iter())?;
+    let email = template.make_message(
+        [rspamd_image].into_iter().chain(images.into_iter()),
+        statistics.into_iter(),
+    )?;
 
     // Create SMTP client for localhost:25
     let mailer = SmtpTransport::unencrypted_localhost();
