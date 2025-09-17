@@ -2,7 +2,7 @@ use clap::Parser;
 use core::error::Error;
 use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
-use plot::{Color, Image, PieSlice, Quantity};
+use plot::{Color, PieSlice, Quantity};
 use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
 use spam::{load_spam_maildir, load_spam_virtual_mailbox_base};
 use statistics::{dates_received, misclassification_rate, quantize_spam_results};

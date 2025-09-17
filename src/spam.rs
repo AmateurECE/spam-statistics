@@ -122,9 +122,10 @@ where
     let mut spam = Vec::new();
     let domains = path.as_ref().read_dir()?;
     for domain in domains {
-        let users = domain?.path().read_dir()?;
-        for user in users {
-            spam.append(&mut list_spam_maildir(user?.path())?);
+        if let Ok(users) = domain?.path().read_dir() {
+            for user in users {
+                spam.append(&mut list_spam_maildir(user?.path())?);
+            }
         }
     }
 
