@@ -108,11 +108,7 @@ where
         }
     }
 
-    let mut spam_scores = spam_results
-        .iter()
-        .map(|email| (email.date_received, email.spam_result))
-        .collect::<Vec<_>>();
-    spam_scores.sort_by(|(one, _), (two, _)| one.cmp(two));
+    spam_results.sort_by(|one, two| one.date_received.cmp(&two.date_received));
 
     let images = if !spam_results.is_empty() {
         vec![
@@ -137,7 +133,12 @@ where
                 name: format!("Daily Spam Results for {}", domain),
                 domain: "Date".into(),
                 range: "X-Spam-Result".into(),
-                data: last_n_days(spam_scores.as_slice(), Days::new(DAILY_CHART_WINDOW)).unwrap(),
+                data: last_n_days(&spam_results, Days::new(DAILY_CHART_WINDOW))
+                    .unwrap()
+                    .iter()
+                    .map(|email| (email.date_received, email.spam_result))
+                    .collect::<Vec<_>>()
+                    .as_slice(),
             }
             .make_boxplot(),
             // Frequency of spam received per week

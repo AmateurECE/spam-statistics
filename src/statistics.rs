@@ -93,10 +93,7 @@ where
     })
 }
 
-pub fn last_n_days(
-    data: &[(NaiveDate, SpamResult)],
-    n_days: Days,
-) -> Option<&[(NaiveDate, SpamResult)]> {
+pub fn last_n_days(data: &[SpamEmail], n_days: Days) -> Option<&[SpamEmail]> {
     let today = Local::now().date_naive();
     let earliest_date = today.checked_sub_days(n_days).unwrap();
 
@@ -104,12 +101,12 @@ pub fn last_n_days(
         return None;
     }
 
-    if data[0].0 > earliest_date {
+    if data[0].date_received > earliest_date {
         Some(data)
-    } else if data.last().unwrap().0 < earliest_date {
+    } else if data.last().unwrap().date_received < earliest_date {
         None
     } else {
-        let i = data.partition_point(|(date, _)| *date < earliest_date);
+        let i = data.partition_point(|email| email.date_received < earliest_date);
         Some(&data[i..])
     }
 }
