@@ -3,7 +3,7 @@ use clap::Parser;
 use core::error::Error;
 use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
-use plot::{Color, PieSlice, Quantity};
+use plot::{pie, Quantity};
 use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
 use spam::{load_spam_maildir, load_spam_virtual_mailbox_base};
 use statistics::{
@@ -43,7 +43,7 @@ fn action_breakdown(
         add_header,
         reject,
     }: MessageActions,
-) -> Vec<PieSlice> {
+) -> Vec<pie::Slice> {
     let total: f64 = (no_action + greylist + add_header + reject) as f64;
     let make_label = |label, occurrences| {
         format!(
@@ -54,24 +54,24 @@ fn action_breakdown(
         )
     };
     vec![
-        PieSlice {
+        pie::Slice {
             label: make_label("No Action", no_action),
-            color: Color::Green,
+            color: pie::Color::Green,
             ratio: (no_action as f64) / total,
         },
-        PieSlice {
+        pie::Slice {
             label: make_label("Greylist", greylist),
-            color: Color::Blue,
+            color: pie::Color::Blue,
             ratio: (greylist as f64) / total,
         },
-        PieSlice {
+        pie::Slice {
             label: make_label("Mark as Spam", add_header),
-            color: Color::Orange,
+            color: pie::Color::Orange,
             ratio: (add_header as f64) / total,
         },
-        PieSlice {
+        pie::Slice {
             label: make_label("Reject", reject),
-            color: Color::Red,
+            color: pie::Color::Red,
             ratio: (reject as f64) / total,
         },
     ]
