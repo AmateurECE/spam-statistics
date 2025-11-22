@@ -16,6 +16,12 @@ pub struct SpamEmail {
     pub is_spam: bool,
 }
 
+impl AsRef<SpamEmail> for SpamEmail {
+    fn as_ref(&self) -> &SpamEmail {
+        &self
+    }
+}
+
 /// A series of data points that correlate a [SpamResult] assigned to an email with the date that
 /// the email was received.
 pub type SpamResults = Vec<SpamEmail>;
@@ -26,13 +32,14 @@ pub type SpamResultBin = i32;
 // TODO: functions in here should return iterators.
 
 /// The [SpamResult]s of the emails over integer-sized bins.
-pub fn quantize_spam_results<'a, I>(
+pub fn quantize_spam_results<'a, I, S>(
     iter: I,
-) -> impl Iterator<Item = SpamResultBin> + Clone + use<'a, I>
+) -> impl Iterator<Item = SpamResultBin> + Clone + use<'a, I, S>
 where
-    I: Iterator<Item = &'a SpamEmail> + Clone,
+    I: Iterator<Item = S> + Clone,
+    S: AsRef<SpamEmail>,
 {
-    iter.map(|email| email.spam_result as SpamResultBin)
+    iter.map(|email| email.as_ref().spam_result as SpamResultBin)
 }
 
 #[derive(Clone, Default)]
@@ -41,12 +48,14 @@ struct SpamCount {
     ham: Occurrences,
 }
 
-fn spam_counts<'a, I>(emails: I) -> Vec<(NaiveDate, SpamCount)>
+fn spam_counts<'a, I, S>(emails: I) -> Vec<(NaiveDate, SpamCount)>
 where
-    I: Iterator<Item = &'a SpamEmail> + Clone,
+    I: Iterator<Item = S> + Clone,
+    S: AsRef<SpamEmail>,
 {
     let mut counts = HashMap::new();
     for email in emails {
+        let email = email.as_ref();
         let count: &mut SpamCount = counts.entry(email.date_received).or_default();
         if email.is_spam {
             count.spam += 1;
@@ -82,9 +91,10 @@ where
 }
 
 /// The percentage of correctly classified spam received on each day.
-pub fn misclassification_rate<'a, I>(iter: I) -> impl Iterator<Item = (NaiveDate, f64)> + Clone
+pub fn misclassification_rate<'a, I, S>(iter: I) -> impl Iterator<Item = (NaiveDate, f64)> + Clone
 where
-    I: Iterator<Item = &'a SpamEmail> + Clone,
+    I: Iterator<Item = S> + Clone,
+    S: AsRef<SpamEmail>,
 {
     spam_counts(iter).into_iter().map(|(date, count)| {
         let spam = count.spam as f64;
@@ -119,19 +129,25 @@ fn previous_sunday(date: &NaiveDate) -> NaiveDate {
 
 /// INVARIANT: The vector must be sorted.
 #[derive(Clone)]
-pub struct WeeklyBins<'a>(Vec<&'a SpamEmail>);
-impl Iterator for WeeklyBins<'_> {
+pub struct WeeklyBins<S>(Vec<S>);
+impl<'a, S> Iterator for WeeklyBins<S>
+where
+    S: AsRef<SpamEmail> + 'a,
+{
     type Item = SpamEmail;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut email = self.0.pop().cloned()?;
+        let mut email = self.0.pop()?.as_ref().clone();
         email.date_received = previous_sunday(&email.date_received);
         Some(email)
     }
 }
 
-impl<'a> WeeklyBins<'a> {
-    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + Clone + use<'a> {
+impl<'a, S> WeeklyBins<S>
+where
+    S: AsRef<SpamEmail> + Clone + 'a,
+{
+    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + Clone + use<'a, S> {
         const DAYS_PER_WEEK: u64 = 7;
         let now = Local::now().date_naive();
         let earliest_date = previous_sunday(&now)
@@ -142,11 +158,12 @@ impl<'a> WeeklyBins<'a> {
     }
 }
 
-pub fn weekly_bins<'a, I>(iter: I) -> WeeklyBins<'a>
+pub fn weekly_bins<'a, I, S>(iter: I) -> WeeklyBins<S>
 where
-    I: Iterator<Item = &'a SpamEmail>,
+    I: Iterator<Item = S>,
+    S: AsRef<SpamEmail> + 'a,
 {
-    let mut email = iter.collect::<Vec<&'a SpamEmail>>();
-    email.sort_by(|a, b| a.date_received.cmp(&b.date_received));
+    let mut email = iter.collect::<Vec<_>>();
+    email.sort_by(|a, b| a.as_ref().date_received.cmp(&b.as_ref().date_received));
     WeeklyBins(email)
 }

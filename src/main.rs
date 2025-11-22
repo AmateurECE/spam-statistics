@@ -125,7 +125,9 @@ where
                 name: format!("Spam Misclassification Rate for {}", domain),
                 domain: "Date".into(),
                 range: "Percent".into(),
-                data: misclassification_rate(spam_results.iter()),
+                data: misclassification_rate(
+                    weekly_bins(spam_results.iter()).take_weeks(WEEKLY_CHART_WINDOW),
+                ),
             }
             .make_linechart(),
             // Distribution of daily spam results
