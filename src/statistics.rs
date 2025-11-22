@@ -26,23 +26,16 @@ pub type SpamResultBin = i32;
 // TODO: functions in here should return iterators.
 
 /// The [SpamResult]s of the emails over integer-sized bins.
-pub fn quantize_spam_results<'a, I>(iter: I) -> Vec<SpamResultBin>
+pub fn quantize_spam_results<'a, I>(
+    iter: I,
+) -> impl Iterator<Item = SpamResultBin> + Clone + use<'a, I>
 where
-    I: Iterator<Item = &'a SpamEmail>,
+    I: Iterator<Item = &'a SpamEmail> + Clone,
 {
     iter.map(|email| email.spam_result as SpamResultBin)
-        .collect::<Vec<_>>()
 }
 
-/// Return a list of the date received for each spam email.
-pub fn dates_received<I>(iter: I) -> Vec<NaiveDate>
-where
-    I: Iterator<Item = SpamEmail>,
-{
-    iter.map(|email| email.date_received).collect::<Vec<_>>()
-}
-
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct SpamCount {
     spam: Occurrences,
     ham: Occurrences,
@@ -89,18 +82,15 @@ where
 }
 
 /// The percentage of correctly classified spam received on each day.
-pub fn misclassification_rate<'a, I>(iter: I) -> Vec<(NaiveDate, f64)>
+pub fn misclassification_rate<'a, I>(iter: I) -> impl Iterator<Item = (NaiveDate, f64)> + Clone
 where
     I: Iterator<Item = &'a SpamEmail> + Clone,
 {
-    spam_counts(iter)
-        .into_iter()
-        .map(|(date, count)| {
-            let spam = count.spam as f64;
-            let ham = count.ham as f64;
-            (date, ham / (spam + ham))
-        })
-        .collect()
+    spam_counts(iter).into_iter().map(|(date, count)| {
+        let spam = count.spam as f64;
+        let ham = count.ham as f64;
+        (date, ham / (spam + ham))
+    })
 }
 
 pub fn last_n_days(
@@ -124,29 +114,30 @@ pub fn last_n_days(
     }
 }
 
+/// Get the date of the previous Sunday given a date.
+fn previous_sunday(date: &NaiveDate) -> NaiveDate {
+    let current_weekday = Datelike::weekday(date) as u64;
+    date.checked_sub_days(Days::new(current_weekday)).unwrap()
+}
+
 /// INVARIANT: The vector must be sorted.
+#[derive(Clone)]
 pub struct WeeklyBins<'a>(Vec<&'a SpamEmail>);
 impl Iterator for WeeklyBins<'_> {
     type Item = SpamEmail;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut email = self.0.pop().cloned()?;
-        let weekday = Datelike::weekday(&email.date_received) as u32;
-        email.date_received = email
-            .date_received
-            .checked_sub_days(Days::new(weekday.into()))
-            .unwrap();
+        email.date_received = previous_sunday(&email.date_received);
         Some(email)
     }
 }
 
 impl<'a> WeeklyBins<'a> {
-    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + use<'a> {
+    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + Clone + use<'a> {
         const DAYS_PER_WEEK: u64 = 7;
         let now = Local::now().date_naive();
-        let current_weekday = Datelike::weekday(&now) as u64;
-        let start_of_week = now.checked_sub_days(Days::new(current_weekday)).unwrap();
-        let earliest_date = start_of_week
+        let earliest_date = previous_sunday(&now)
             .checked_sub_days(Days::new((num - 1) * DAYS_PER_WEEK))
             .unwrap();
         self.into_iter()

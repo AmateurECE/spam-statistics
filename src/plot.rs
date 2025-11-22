@@ -1,9 +1,8 @@
-use chrono::NaiveDate;
 use plotters::{
     backend::{PixelFormat, RGBPixel},
     style::{FontDesc, IntoFont},
 };
-use std::{cell::LazyCell, collections::HashMap, io::Cursor};
+use std::{cell::LazyCell, io::Cursor};
 
 pub mod boxplot;
 pub mod hist;
@@ -27,53 +26,15 @@ static FONT: LazyCell<FontDesc<'static>> = LazyCell::new(|| ("Roboto", 16).into_
 }
 const IMAGE_SIZE: (u32, u32) = (600, 400);
 
+//
+// Miscellaneous
+//
+
 const fn buffer_size() -> usize {
     let (width, height) = IMAGE_SIZE;
     let width: usize = width as usize;
     let height: usize = height as usize;
     width * height * RGBPixel::PIXEL_SIZE
-}
-
-pub trait ChartRange {
-    type Value;
-    fn chart_range<I>(iter: I) -> Option<(Self::Value, Self::Value)>
-    where
-        I: Iterator<Item = Self::Value> + Clone;
-}
-
-impl ChartRange for NaiveDate {
-    type Value = NaiveDate;
-    fn chart_range<I>(iter: I) -> Option<(Self::Value, Self::Value)>
-    where
-        I: Iterator<Item = Self::Value> + Clone,
-    {
-        let min = iter.clone().min()?;
-        let max = iter.max()?;
-        Some((min, max))
-    }
-}
-
-impl ChartRange for f64 {
-    type Value = f64;
-    fn chart_range<I>(iter: I) -> Option<(Self::Value, Self::Value)>
-    where
-        I: Iterator<Item = Self::Value> + Clone,
-    {
-        let min = iter.clone().fold(f64::INFINITY, |a, b| a.min(b));
-        let max = iter.clone().fold(f64::MIN, |a, b| a.max(b));
-        Some((min, max))
-    }
-}
-
-fn histogram_y_range<X>(data: &[X]) -> usize
-where
-    X: core::cmp::Eq + core::hash::Hash + Copy,
-{
-    let mut counts: HashMap<X, usize> = HashMap::new();
-    for x in data {
-        *counts.entry(*x).or_insert(0) += 1;
-    }
-    *counts.values().max().unwrap()
 }
 
 fn into_png(bitmap: Vec<u8>) -> Vec<u8> {
@@ -87,4 +48,66 @@ fn into_png(bitmap: Vec<u8>) -> Vec<u8> {
         writer.write_image_data(&bitmap).unwrap();
     }
     png
+}
+
+//
+// CartesianRange
+//
+
+struct LinearRange<X> {
+    min: X,
+    max: X,
+}
+
+struct CartesianRange<X, Y> {
+    x: LinearRange<X>,
+    y: LinearRange<Y>,
+}
+
+trait TryIntoCartesianRange {
+    type X;
+    type Y;
+    fn try_into_cartesian_range(self) -> Option<CartesianRange<Self::X, Self::Y>>;
+}
+
+impl<X, Y, I> TryIntoCartesianRange for I
+where
+    I: Iterator<Item = (X, Y)>,
+    X: PartialOrd + Copy,
+    Y: PartialOrd + Copy,
+{
+    type X = X;
+    type Y = Y;
+    fn try_into_cartesian_range(mut self) -> Option<CartesianRange<Self::X, Self::Y>> {
+        let (x, y) = self.next()?;
+        let init = CartesianRange {
+            x: LinearRange { min: x, max: x },
+            y: LinearRange { min: y, max: y },
+        };
+        Some(self.fold(
+            init,
+            |CartesianRange {
+                 x:
+                     LinearRange {
+                         min: x_min,
+                         max: x_max,
+                     },
+                 y:
+                     LinearRange {
+                         min: y_min,
+                         max: y_max,
+                     },
+             },
+             (x, y)| CartesianRange {
+                x: LinearRange {
+                    min: if x.lt(&x_min) { x } else { x_min },
+                    max: if x.gt(&x_max) { x } else { x_max },
+                },
+                y: LinearRange {
+                    min: if y.lt(&y_min) { y } else { y_min },
+                    max: if y.gt(&y_max) { y } else { y_max },
+                },
+            },
+        ))
+    }
 }

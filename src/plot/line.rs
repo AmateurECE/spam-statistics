@@ -1,16 +1,20 @@
 use core::fmt;
 
-use super::{buffer_size, into_png, ChartRange, Image, Quantity, FONT, IMAGE_SIZE};
+use super::{
+    buffer_size, into_png, CartesianRange, Image, LinearRange, Quantity, TryIntoCartesianRange,
+    FONT, IMAGE_SIZE,
+};
 use plotters::{
     coord::ranged1d::{AsRangedCoord, DefaultFormatting, ValueFormatter},
     prelude::*,
     style::full_palette::PURPLE,
 };
 
-impl<X, Y, R, S> Quantity<&[(X, Y)]>
+impl<X, Y, I, R, S> Quantity<I>
 where
-    X: ChartRange<Value = X> + fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + 'static,
-    Y: ChartRange<Value = Y> + fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + 'static,
+    I: Iterator<Item = (X, Y)> + Clone,
+    X: fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + PartialOrd + 'static,
+    Y: fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + PartialOrd + 'static,
     std::ops::Range<X>: AsRangedCoord<CoordDescType = R, Value = X>,
     R: Ranged<FormatOption = DefaultFormatting, ValueType = X> + DiscreteRanged + Clone,
     std::ops::Range<Y>: AsRangedCoord<CoordDescType = S, Value = Y>,
@@ -18,10 +22,16 @@ where
 {
     pub fn make_linechart(self) -> Image {
         let mut bitmap = vec![0; buffer_size()];
-        let domain = self.data.iter().map(|(x, _)| *x);
-        let (x_min, x_max) = X::chart_range(domain).unwrap();
-        let range = self.data.iter().map(|(_, y)| *y);
-        let (y_min, y_max) = Y::chart_range(range).unwrap();
+        let CartesianRange {
+            x: LinearRange {
+                min: x_min,
+                max: x_max,
+            },
+            y: LinearRange {
+                min: y_min,
+                max: y_max,
+            },
+        } = self.data.clone().try_into_cartesian_range().unwrap();
         let font = FONT.with(|f| (*f).clone());
         {
             let drawing_area =
@@ -45,13 +55,12 @@ where
                 .expect("couldn't draw axes");
 
             chart_context
-                .draw_series(LineSeries::new(self.data.iter().cloned(), PURPLE))
+                .draw_series(LineSeries::new(self.data.clone(), PURPLE))
                 .expect("couldn't draw histogram series");
             chart_context
                 .draw_series(
                     self.data
-                        .iter()
-                        .map(|(x, y)| Circle::new((*x, *y), 3, PURPLE.filled())),
+                        .map(|(x, y)| Circle::new((x, y), 3, PURPLE.filled())),
                 )
                 .expect("couldn't draw histogram series");
 
