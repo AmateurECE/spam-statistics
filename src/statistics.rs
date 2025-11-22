@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, Days, Local, NaiveDate};
 
 /// A [SpamResult] is the value assigned to an email by Rspamd that summarizes its spam or ham
 /// -like attributes.
@@ -9,7 +9,7 @@ pub type SpamResult = f64;
 /// The number of occurrences of an event.
 pub type Occurrences = usize;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SpamEmail {
     pub date_received: NaiveDate,
     pub spam_result: SpamResult,
@@ -23,6 +23,8 @@ pub type SpamResults = Vec<SpamEmail>;
 /// Spam results are sorted into integer-sized bins for calculating the distribution.
 pub type SpamResultBin = i32;
 
+// TODO: functions in here should return iterators.
+
 /// The [SpamResult]s of the emails over integer-sized bins.
 pub fn quantize_spam_results<'a, I>(iter: I) -> Vec<SpamResultBin>
 where
@@ -33,9 +35,9 @@ where
 }
 
 /// Return a list of the date received for each spam email.
-pub fn dates_received<'a, I>(iter: I) -> Vec<NaiveDate>
+pub fn dates_received<I>(iter: I) -> Vec<NaiveDate>
 where
-    I: Iterator<Item = &'a SpamEmail>,
+    I: Iterator<Item = SpamEmail>,
 {
     iter.map(|email| email.date_received).collect::<Vec<_>>()
 }
@@ -99,4 +101,64 @@ where
             (date, ham / (spam + ham))
         })
         .collect()
+}
+
+pub fn last_n_days(
+    data: &[(NaiveDate, SpamResult)],
+    n_days: Days,
+) -> Option<&[(NaiveDate, SpamResult)]> {
+    let today = Local::now().date_naive();
+    let earliest_date = today.checked_sub_days(n_days).unwrap();
+
+    if data.is_empty() {
+        return None;
+    }
+
+    if data[0].0 > earliest_date {
+        Some(data)
+    } else if data.last().unwrap().0 < earliest_date {
+        None
+    } else {
+        let i = data.partition_point(|(date, _)| *date < earliest_date);
+        Some(&data[i..])
+    }
+}
+
+/// INVARIANT: The vector must be sorted.
+pub struct WeeklyBins<'a>(Vec<&'a SpamEmail>);
+impl Iterator for WeeklyBins<'_> {
+    type Item = SpamEmail;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut email = self.0.pop().cloned()?;
+        let weekday = Datelike::weekday(&email.date_received) as u32;
+        email.date_received = email
+            .date_received
+            .checked_sub_days(Days::new(weekday.into()))
+            .unwrap();
+        Some(email)
+    }
+}
+
+impl<'a> WeeklyBins<'a> {
+    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + use<'a> {
+        const DAYS_PER_WEEK: u64 = 7;
+        let now = Local::now().date_naive();
+        let current_weekday = Datelike::weekday(&now) as u64;
+        let start_of_week = now.checked_sub_days(Days::new(current_weekday)).unwrap();
+        let earliest_date = start_of_week
+            .checked_sub_days(Days::new((num - 1) * DAYS_PER_WEEK))
+            .unwrap();
+        self.into_iter()
+            .take_while(move |e| e.date_received > earliest_date)
+    }
+}
+
+pub fn weekly_bins<'a, I>(iter: I) -> WeeklyBins<'a>
+where
+    I: Iterator<Item = &'a SpamEmail>,
+{
+    let mut email = iter.collect::<Vec<&'a SpamEmail>>();
+    email.sort_by(|a, b| a.date_received.cmp(&b.date_received));
+    WeeklyBins(email)
 }

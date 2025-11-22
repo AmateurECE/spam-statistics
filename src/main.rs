@@ -1,3 +1,4 @@
+use chrono::Days;
 use clap::Parser;
 use core::error::Error;
 use email::MessageTemplate;
@@ -5,7 +6,9 @@ use lettre::{SmtpTransport, Transport};
 use plot::{Color, PieSlice, Quantity};
 use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
 use spam::{load_spam_maildir, load_spam_virtual_mailbox_base};
-use statistics::{dates_received, misclassification_rate, quantize_spam_results};
+use statistics::{
+    dates_received, last_n_days, misclassification_rate, quantize_spam_results, weekly_bins,
+};
 use std::{
     ffi::{c_char, CStr},
     io,
@@ -17,6 +20,11 @@ mod plot;
 mod rspamd;
 mod spam;
 mod statistics;
+
+// Max number of weeks to include in weekly charts
+const WEEKLY_CHART_WINDOW: u64 = 30;
+// Max number of days to include in daily charts
+const DAILY_CHART_WINDOW: u64 = 14;
 
 fn get_hostname() -> Result<String, anyhow::Error> {
     let mut buffer: [u8; 64] = [0; 64];
@@ -69,7 +77,6 @@ fn action_breakdown(
     ]
 }
 
-#[allow(dead_code)]
 fn spam_statistics<P, Q>(
     domain: &str,
     virtual_mailbox_base: P,
@@ -94,6 +101,8 @@ where
     }
     .make_pie();
 
+    // TODO: Encode the sorted invariant here somewhere, because everything after this depends on
+    // it being sorted
     let mut spam_results = load_spam_virtual_mailbox_base(virtual_mailbox_base)?;
     for maildir in maildirs {
         if let Ok(results) = load_spam_maildir(maildir) {
@@ -101,14 +110,15 @@ where
         }
     }
 
-    let spam_scores = spam_results
+    let mut spam_scores = spam_results
         .iter()
         .map(|email| (email.date_received, email.spam_result))
         .collect::<Vec<_>>();
+    spam_scores.sort_by(|(one, _), (two, _)| one.cmp(two));
 
     let images = if !spam_results.is_empty() {
         vec![
-            // Histogram based on X-Spam-Result values
+            // Frequency of X-Spam-Result values
             Quantity {
                 name: format!("X-Spam-Result Distribution for {}", domain),
                 domain: "Spam Result".into(),
@@ -116,7 +126,7 @@ where
                 data: quantize_spam_results(spam_results.iter()).as_slice(),
             }
             .make_histogram(),
-            // Histogram of spam classification performance
+            // History of spam classification performance
             Quantity {
                 name: format!("Spam Misclassification Rate for {}", domain),
                 domain: "Date".into(),
@@ -129,15 +139,18 @@ where
                 name: format!("Daily Spam Results for {}", domain),
                 domain: "Date".into(),
                 range: "X-Spam-Result".into(),
-                data: spam_scores.as_slice(),
+                data: last_n_days(spam_scores.as_slice(), Days::new(DAILY_CHART_WINDOW)).unwrap(),
             }
             .make_boxplot(),
-            // Histogram of spam received per day
+            // Frequency of spam received per week
             Quantity {
-                name: format!("Daily Received Spam for {}", domain),
-                domain: "Date".into(),
+                name: format!("Weekly Received Spam for {}", domain),
+                domain: "Week of".into(),
                 range: "Occurrences".into(),
-                data: dates_received(spam_results.iter()).as_slice(),
+                data: dates_received(
+                    weekly_bins(spam_results.iter()).take_weeks(WEEKLY_CHART_WINDOW),
+                )
+                .as_slice(),
             }
             .make_histogram(),
         ]

@@ -130,6 +130,7 @@ fn into_png(bitmap: Vec<u8>) -> Vec<u8> {
     png
 }
 
+// TODO: Implement this for (X, Y) as well
 impl<X, R> Quantity<&[X]>
 where
     X: fmt::Display + Copy + Clone + core::fmt::Debug + PartialEq + Ord + core::hash::Hash,
@@ -246,6 +247,7 @@ where
     }
 }
 
+// TODO: Make X and Y generic here
 impl Quantity<&[(NaiveDate, SpamResult)]> {
     pub fn make_boxplot(self) -> Image {
         let mut dates = self
