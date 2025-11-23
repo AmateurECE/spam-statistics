@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -6,11 +7,11 @@ use std::{
 };
 
 use chrono::{DateTime, Local, NaiveDate};
+use email::Mailbox;
 use regex::Regex;
 
 use crate::statistics::{SpamEmail, SpamResults};
 
-// TODO: Replace with thiserror
 #[derive(Debug, Copy, Clone, thiserror::Error)]
 pub enum EmailError {
     #[error("message is missing spam result header")]
@@ -22,8 +23,8 @@ fn make_spam_email(message: String, date_received: NaiveDate) -> Result<SpamEmai
         LazyLock::new(|| Regex::new(r"[^\[]*\[(-?[.0-9]*)").unwrap());
 
     let parsed = email::MimeMessage::parse(message.as_str())?;
-    let spam_result = parsed
-        .headers
+    let headers = parsed.headers;
+    let spam_result = headers
         .get("X-Spamd-Result".to_string())
         .ok_or(EmailError::MissingOrMalformedHeader)?
         .get_value::<String>()?;
@@ -41,8 +42,7 @@ fn make_spam_email(message: String, date_received: NaiveDate) -> Result<SpamEmai
         Err(parse_error)
     }?;
 
-    let is_spam = parsed
-        .headers
+    let is_spam = headers
         .get("X-Spam".to_string())
         .and_then(|header| {
             header
@@ -52,11 +52,17 @@ fn make_spam_email(message: String, date_received: NaiveDate) -> Result<SpamEmai
         })
         .unwrap_or(false);
 
+    let from = headers
+        .get("From".to_string())
+        .ok_or(EmailError::MissingOrMalformedHeader)?
+        .get_value::<String>()?;
+
     let spam_result: f64 = spam_result.as_str().parse()?;
     Ok(SpamEmail {
         date_received,
         spam_result,
         is_spam,
+        from,
     })
 }
 
@@ -103,6 +109,55 @@ where
     }
 
     Ok(spam)
+}
+
+/// Return a list of the top spam-sending domains
+fn top_offending_domains<S, I>(iter: I) -> Vec<(String, usize)>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<SpamEmail>,
+{
+    let mut counts = HashMap::<String, usize>::new();
+    let mut error_count = 0;
+    let misclassified_spam = iter.filter(|email| !email.as_ref().is_spam);
+    for message in misclassified_spam {
+        let message = message.as_ref();
+        let Ok(mailbox) = message.from.parse::<Mailbox>() else {
+            error_count += 1;
+            continue;
+        };
+
+        let mut address = mailbox.address.split("@");
+        address.next();
+        let Some(domain) = address.next() else {
+            error_count += 1;
+            continue;
+        };
+        let count = counts.entry(domain.to_string()).or_default();
+        *count += 1;
+    }
+
+    eprintln!(
+        "{} addresses failed to parse while determining the spammiest domains",
+        error_count
+    );
+
+    let mut counts = counts.into_iter().collect::<Vec<_>>();
+    counts.sort_by(|(_, one), (_, two)| two.cmp(one));
+    counts
+}
+
+pub fn domain_report(spam: impl Iterator<Item = SpamEmail>) -> String {
+    let domains = top_offending_domains(spam);
+    "<h3>Misclassified Domains</h3>".to_string()
+        + "<p>Domains that have sent mail misclassified as ham.</p>"
+        + r#"<ul style="list-style-type:none;">"#
+        + &domains
+            .iter()
+            .map(|(domain, count)| format!("<li>{}: {}</li>\n", domain, count))
+            .collect::<Vec<_>>()
+            .join("\n")
+        + "</ul>"
 }
 
 pub fn load_spam_maildir<P>(path: P) -> anyhow::Result<SpamResults>

@@ -4,8 +4,8 @@ use core::error::Error;
 use email::MessageTemplate;
 use lettre::{SmtpTransport, Transport};
 use plot::{pie, Quantity};
-use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
-use spam::{load_spam_maildir, load_spam_virtual_mailbox_base};
+use rspamd::{load_rspamd_statistics, MessageActions};
+use spam::{domain_report, load_spam_maildir, load_spam_virtual_mailbox_base};
 use statistics::{
     last_n_days, misclassification_rate, quantize_spam_results, IntoBins, WeeklyBins,
 };
@@ -42,37 +42,37 @@ fn action_breakdown(
         greylist,
         add_header,
         reject,
-    }: MessageActions,
+    }: &MessageActions,
 ) -> Vec<pie::Slice> {
     let total: f64 = (no_action + greylist + add_header + reject) as f64;
-    let make_label = |label, occurrences| {
+    let make_label = |label, occurrences: &usize| {
         format!(
             "{} ({}, {:.1}%)",
             label,
             occurrences,
-            ((occurrences as f64) / total) * 100.0
+            ((*occurrences as f64) / total) * 100.0
         )
     };
     vec![
         pie::Slice {
             label: make_label("No Action", no_action),
             color: pie::Color::Green,
-            ratio: (no_action as f64) / total,
+            ratio: (*no_action as f64) / total,
         },
         pie::Slice {
             label: make_label("Greylist", greylist),
             color: pie::Color::Blue,
-            ratio: (greylist as f64) / total,
+            ratio: (*greylist as f64) / total,
         },
         pie::Slice {
             label: make_label("Mark as Spam", add_header),
             color: pie::Color::Orange,
-            ratio: (add_header as f64) / total,
+            ratio: (*add_header as f64) / total,
         },
         pie::Slice {
             label: make_label("Reject", reject),
             color: pie::Color::Red,
-            ratio: (reject as f64) / total,
+            ratio: (*reject as f64) / total,
         },
     ]
 }
@@ -86,11 +86,8 @@ where
     P: AsRef<Path>,
     Q: AsRef<Path>,
 {
-    let RspamdStatistics {
-        statistics,
-        message_actions,
-    } = load_rspamd_statistics()?;
-    let message_actions = action_breakdown(message_actions);
+    let rspamc_stat = load_rspamd_statistics()?;
+    let message_actions = action_breakdown(&rspamc_stat.message_actions);
 
     // Rspamd action breakdown
     let rspamd_image = Quantity {
@@ -168,9 +165,11 @@ where
     };
 
     let template = MessageTemplate::new(domain.into(), "postmaster".into())?;
+    let text_content =
+        rspamd::stat_report(rspamc_stat) + "\n" + &domain_report(spam_results.into_iter());
     let email = template.make_message(
         [rspamd_image].into_iter().chain(images.into_iter()),
-        statistics.into_iter(),
+        text_content,
     )?;
 
     // Create SMTP client for localhost:25

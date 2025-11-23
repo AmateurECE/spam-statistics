@@ -78,3 +78,16 @@ pub fn load_rspamd_statistics() -> Result<RspamdStatistics, RspamdError> {
         message_actions,
     })
 }
+
+/// Create an HTML formatted report from the output of `rspamc stat`
+pub fn stat_report(output: RspamdStatistics) -> String {
+    "<h3>Rspamd statistics</h3>".to_string()
+        + r#"<ul style="list-style-type:none;">"#
+        + &output
+            .statistics
+            .iter()
+            .map(|line| format!("<li>{}</li>", &line))
+            .collect::<Vec<_>>()
+            .join("\n")
+        + "</ul>"
+}

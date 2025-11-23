@@ -15,6 +15,7 @@ pub struct SpamEmail {
     pub date_received: NaiveDate,
     pub spam_result: SpamResult,
     pub is_spam: bool,
+    pub from: String,
 }
 
 impl AsRef<SpamEmail> for SpamEmail {
