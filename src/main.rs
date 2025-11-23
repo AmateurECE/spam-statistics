@@ -6,7 +6,9 @@ use lettre::{SmtpTransport, Transport};
 use plot::{pie, Quantity};
 use rspamd::{load_rspamd_statistics, MessageActions, RspamdStatistics};
 use spam::{load_spam_maildir, load_spam_virtual_mailbox_base};
-use statistics::{last_n_days, misclassification_rate, quantize_spam_results, weekly_bins};
+use statistics::{
+    last_n_days, misclassification_rate, quantize_spam_results, IntoBins, WeeklyBins,
+};
 use std::{
     ffi::{c_char, CStr},
     io,
@@ -117,16 +119,19 @@ where
                 name: format!("X-Spam-Result Distribution for {}", domain),
                 domain: "Spam Result".into(),
                 range: "Occurrences".into(),
-                data: quantize_spam_results(spam_results.iter()).map(|score| (score, 1)),
+                data: quantize_spam_results(spam_results.iter()).into_bins(),
             }
             .make_histogram(),
             // History of spam classification performance
             Quantity {
                 name: format!("Spam Misclassification Rate for {}", domain),
-                domain: "Date".into(),
+                domain: "Week of".into(),
                 range: "Percent".into(),
                 data: misclassification_rate(
-                    weekly_bins(spam_results.iter()).take_weeks(WEEKLY_CHART_WINDOW),
+                    spam_results
+                        .iter()
+                        .weekly_bins()
+                        .take_weeks(WEEKLY_CHART_WINDOW),
                 ),
             }
             .make_linechart(),
@@ -148,9 +153,12 @@ where
                 name: format!("Weekly Received Spam for {}", domain),
                 domain: "Week of".into(),
                 range: "Occurrences".into(),
-                data: weekly_bins(spam_results.iter())
+                data: spam_results
+                    .iter()
+                    .weekly_bins()
                     .take_weeks(WEEKLY_CHART_WINDOW)
-                    .map(|email| (email.date_received, 1usize)),
+                    .map(|email| email.date_received)
+                    .into_bins(),
             }
             .make_histogram(),
         ]

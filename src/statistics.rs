@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use core::hash;
+use std::{collections::HashMap, vec};
 
 use chrono::{Datelike, Days, Local, NaiveDate};
 
@@ -18,7 +19,7 @@ pub struct SpamEmail {
 
 impl AsRef<SpamEmail> for SpamEmail {
     fn as_ref(&self) -> &SpamEmail {
-        &self
+        self
     }
 }
 
@@ -28,8 +29,6 @@ pub type SpamResults = Vec<SpamEmail>;
 
 /// Spam results are sorted into integer-sized bins for calculating the distribution.
 pub type SpamResultBin = i32;
-
-// TODO: functions in here should return iterators.
 
 /// The [SpamResult]s of the emails over integer-sized bins.
 pub fn quantize_spam_results<'a, I, S>(
@@ -48,7 +47,7 @@ struct SpamCount {
     ham: Occurrences,
 }
 
-fn spam_counts<'a, I, S>(emails: I) -> Vec<(NaiveDate, SpamCount)>
+fn spam_counts<I, S>(emails: I) -> impl Iterator<Item = (NaiveDate, SpamCount)> + Clone
 where
     I: Iterator<Item = S> + Clone,
     S: AsRef<SpamEmail>,
@@ -64,39 +63,18 @@ where
         }
     }
 
-    let dates_received = counts.keys();
-    let Some(earliest) = dates_received.clone().min() else {
-        return Vec::new();
-    };
-
-    // INVARIANT: There is definitely a max value here, because there was a min value.
-    let latest = dates_received.max().unwrap();
-
-    let delta = (*latest - *earliest).num_days() + 1;
-    let delta: usize = delta.try_into().unwrap_or_else(|_| {
-        panic!(
-            "{} seems like the wrong number of emails for this inbox",
-            delta
-        )
-    });
-
-    earliest
-        .iter_days()
-        .take(delta)
-        .map(|day| {
-            let count = counts.remove(&day).unwrap_or(SpamCount::default());
-            (day, count)
-        })
-        .collect()
+    let mut counts = counts.into_iter().collect::<Vec<_>>();
+    counts.sort_by(|(one, _), (two, _)| one.cmp(two));
+    counts.into_iter()
 }
 
 /// The percentage of correctly classified spam received on each day.
-pub fn misclassification_rate<'a, I, S>(iter: I) -> impl Iterator<Item = (NaiveDate, f64)> + Clone
+pub fn misclassification_rate<I, S>(iter: I) -> impl Iterator<Item = (NaiveDate, f64)> + Clone
 where
     I: Iterator<Item = S> + Clone,
-    S: AsRef<SpamEmail>,
+    S: AsRef<SpamEmail> + Clone,
 {
-    spam_counts(iter).into_iter().map(|(date, count)| {
+    spam_counts(iter).map(|(date, count)| {
         let spam = count.spam as f64;
         let ham = count.ham as f64;
         (date, ham / (spam + ham))
@@ -127,12 +105,16 @@ fn previous_sunday(date: &NaiveDate) -> NaiveDate {
     date.checked_sub_days(Days::new(current_weekday)).unwrap()
 }
 
+//
+// WeeklyBins
+//
+
 /// INVARIANT: The vector must be sorted.
 #[derive(Clone)]
-pub struct WeeklyBins<S>(Vec<S>);
-impl<'a, S> Iterator for WeeklyBins<S>
+pub struct WeeklyBinIter<S>(Vec<S>);
+impl<S> Iterator for WeeklyBinIter<S>
 where
-    S: AsRef<SpamEmail> + 'a,
+    S: AsRef<SpamEmail>,
 {
     type Item = SpamEmail;
 
@@ -143,11 +125,11 @@ where
     }
 }
 
-impl<'a, S> WeeklyBins<S>
+impl<S> WeeklyBinIter<S>
 where
-    S: AsRef<SpamEmail> + Clone + 'a,
+    S: AsRef<SpamEmail> + Clone,
 {
-    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + Clone + use<'a, S> {
+    pub fn take_weeks(self, num: u64) -> impl Iterator<Item = SpamEmail> + Clone + use<S> {
         const DAYS_PER_WEEK: u64 = 7;
         let now = Local::now().date_naive();
         let earliest_date = previous_sunday(&now)
@@ -158,12 +140,46 @@ where
     }
 }
 
-pub fn weekly_bins<'a, I, S>(iter: I) -> WeeklyBins<S>
+pub trait WeeklyBins<S> {
+    fn weekly_bins(self) -> WeeklyBinIter<S>;
+}
+
+impl<I, S> WeeklyBins<S> for I
 where
     I: Iterator<Item = S>,
-    S: AsRef<SpamEmail> + 'a,
+    S: AsRef<SpamEmail>,
 {
-    let mut email = iter.collect::<Vec<_>>();
-    email.sort_by(|a, b| a.as_ref().date_received.cmp(&b.as_ref().date_received));
-    WeeklyBins(email)
+    fn weekly_bins(self) -> WeeklyBinIter<S> {
+        let mut email = self.collect::<Vec<_>>();
+        email.sort_by(|a, b| a.as_ref().date_received.cmp(&b.as_ref().date_received));
+        WeeklyBinIter(email)
+    }
+}
+
+//
+// IntoBins
+//
+
+pub trait IntoBins {
+    type Item;
+    fn into_bins(self) -> vec::IntoIter<Self::Item>;
+}
+
+impl<I, X> IntoBins for I
+where
+    I: Iterator<Item = X>,
+    X: Ord + Eq + hash::Hash,
+{
+    type Item = (X, usize);
+    fn into_bins(self) -> vec::IntoIter<Self::Item> {
+        let mut counts = HashMap::new();
+        for item in self {
+            let entry = counts.entry(item).or_default();
+            *entry += 1;
+        }
+
+        let mut counts = counts.into_iter().collect::<Vec<_>>();
+        counts.sort_by(|(one, _), (two, _)| one.cmp(two));
+        counts.into_iter()
+    }
 }
