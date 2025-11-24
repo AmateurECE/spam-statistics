@@ -138,7 +138,6 @@ where
                 domain: "Date".into(),
                 range: "X-Spam-Result".into(),
                 data: last_n_days(&spam_results, Days::new(DAILY_CHART_WINDOW))
-                    .unwrap()
                     .iter()
                     .map(|email| (email.date_received, email.spam_result))
                     .collect::<Vec<_>>()
